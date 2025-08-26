@@ -1,0 +1,110 @@
+# Entornos virtuales
+venv/
+env/
+.venv/
+.env/
+.python-version
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Archivos de datos grandes o sensibles
+*.csv
+*.xlsx
+!sample_data.xlsx
+!datasets/sample/
+*.parquet
+*.feather
+*.sqlite
+*.db
+data/processed
+data/shapefiles
+
+# Secretos y configuración
+.streamlit/secrets.toml
+.env
+credentials.json
+token.json
+config.ini
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+*.swp
+
+# Archivos de IDE
+.idea/
+.vscode/
+*.code-workspace
+*.sublime-workspace
+*.sublime-project
+.project
+.settings/
+.classpath
+*.swp
+*.swo
+*~
+
+
+.streamlit/secrets.toml
+*.json
+
+
+# Archivos de log
+*.log
+logs/
+log.txt
+
+# Directorios de build y distribución
+dist/
+build/
+*.egg-info/
+.eggs/
+*.egg
+__pypackages__/
+
+# Archivos temporales
+temp/
+tmp/
+.ipynb_checkpoints/
+
+# Modelos y archivos pesados
+*.pt
+*.h5
+*.joblib
+*.pickle
+*.pkl
+
+# Imágenes generadas
+output/
+results/
+figures/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+!assets/images/logo_gobernacion.png
+
+# Documentación generada
+docs/_build/
+site/
+.cache/
+
+# Streamlit specific
+.streamlit/watch/
+
+# Cache files
+*.pyc
+.cache

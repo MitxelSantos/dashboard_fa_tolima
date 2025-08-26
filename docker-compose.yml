@@ -1,0 +1,47 @@
+# docker-compose.yml
+# PostgreSQL + PostGIS para Sistema Epidemiológico Tolima
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: tolima_postgres
+    environment:
+      POSTGRES_DB: epidemiologia_tolima
+      POSTGRES_USER: tolima_admin
+      POSTGRES_PASSWORD: tolima2025!
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      # Datos persistentes
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts de inicialización
+      - ./sql_init:/docker-entrypoint-initdb.d
+      # Backups
+      - ./backups:/backups
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tolima_admin -d epidemiologia_tolima"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Herramienta de administración web (opcional)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: tolima_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@tolima.gov.co
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: tolima_postgres_data
