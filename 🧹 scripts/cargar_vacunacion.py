@@ -35,7 +35,7 @@ def limpiar_paiweb_fiebre_amarilla_anonimo(archivo_excel, hoja="Vacunas"):
     # 1. ELIMINAR COLUMNAS PERSONALES Y NO NECESARIAS
     # ================================
     columnas_eliminar = [
-        "Departamento", "nombrebiologico", "dosis", "Actualizacion",
+        "nombrebiologico", "dosis", "Actualizacion",
         # ELIMINAR TODOS LOS DATOS PERSONALES
         "PrimerNombre", "SegundoNombre", "PrimerApellido", "SegundoApellido",
         "Documento", "tipoDocumento", "FechaNacimiento"

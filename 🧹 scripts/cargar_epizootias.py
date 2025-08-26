@@ -54,23 +54,20 @@ def procesar_epizootias(archivo_excel, hoja=None):
         
         # Mapeo común de columnas
         mapeo_columnas = {
-            'fecha_recolección': 'fecha_recoleccion',
-            'fecha_recoleccion_': 'fecha_recoleccion',
-            'fecha_notificacion': 'fecha_notificacion', 
-            'descripcion': 'descripcion',
-            'descripción': 'descripcion',
-            'informante': 'informante',
-            'especie': 'especie',
-            'latitud': 'latitud',
-            'longitud': 'longitud',
-            'fecha_envio_muestra': 'fecha_envio_muestra',
-            'fecha_envío_muestra': 'fecha_envio_muestra',
-            'resultado_pcr': 'resultado_pcr',
-            'fecha_resultado_pcr': 'fecha_resultado_pcr',
-            'resultado_histopatologia': 'resultado_histopatologia',
-            'resultado_histopatología': 'resultado_histopatologia',
-            'fecha_resultado_histopatologia': 'fecha_resultado_histopatologia',
-            'fecha_resultado_histopatología': 'fecha_resultado_histopatologia'
+            "MUNICIPIO": "municipio",
+            "VEREDA": "vereda",
+            'FECHA_RECOLECCION': 'fecha_recoleccion',
+            'FECHA_NOTIFICACION': 'fecha_notificacion', 
+            'DESCRIPCION': 'descripcion',
+            'INFORMANTE': 'informante',
+            'ESPECIE': 'especie',
+            'LATITUD': 'latitud',
+            'LONGITUD': 'longitud',
+            'FECHA_ENVIO_MUESTRA': 'fecha_envio_muestra',
+            'RESULTADO_PCR': 'resultado_pcr',
+            'FECHA_RESULTADO_PCR': 'fecha_resultado_pcr',
+            'RESULTADO_HISTOPATOLOGIA': 'resultado_histopatologia',
+            'FECHA_RESULTADO_HISTOPATOLOGIA': 'fecha_resultado_histopatologia'
         }
         
         # Aplicar mapeo

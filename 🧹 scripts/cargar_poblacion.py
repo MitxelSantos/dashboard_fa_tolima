@@ -50,12 +50,11 @@ def cargar_poblacion_postgresql(archivo_csv):
             print(f"⚠️ Columnas faltantes: {columnas_faltantes}")
             # Intentar mapear nombres alternativos
             mapeo_columnas = {
-                'codigo_mpio': 'codigo_municipio',
-                'nom_municipio': 'municipio', 
-                'ubicacion': 'tipo_ubicacion',
-                'grupo_edad': 'grupo_etario',
-                'poblacion': 'poblacion_total',
-                'total': 'poblacion_total'
+                'codigo_municipio': 'codigo_municipio',
+                'municipio': 'municipio', 
+                'tipo_ubicacion': 'tipo_ubicacion',
+                'grupo_etario': 'grupo_etario',
+                'poblacion_total': 'poblacion_total'
             }
             
             for col_alt, col_std in mapeo_columnas.items():
