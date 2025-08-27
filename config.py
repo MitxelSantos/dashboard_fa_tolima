@@ -2,13 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 config.py - Configuración Centralizada Sistema Epidemiológico Tolima
-Configuración única de grupos etarios para todo el sistema
+Configuración única con mapeo centralizado de códigos DIVIPOLA desde .gpkg
 """
 
 import os
 import pandas as pd
+import geopandas as gpd
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
+import warnings
+warnings.filterwarnings('ignore')
 
 # Cargar variables de entorno
 load_dotenv()
@@ -17,7 +22,6 @@ load_dotenv()
 # CONFIGURACIÓN GRUPOS ETARIOS CENTRALIZADA
 # ================================
 
-# CONFIGURACIÓN ÚNICA - MODIFICAR SOLO AQUÍ AFECTA TODO EL SISTEMA
 GRUPOS_ETARIOS = {
     '09-23 meses': (9, 23),        # meses
     '02-19 años': (24, 239),       # meses  
@@ -29,12 +33,6 @@ def clasificar_grupo_etario(edad_meses):
     """
     Función ÚNICA de clasificación de grupos etarios
     Usada por TODOS los scripts del sistema
-    
-    Args:
-        edad_meses (float): Edad en meses totales
-        
-    Returns:
-        str: Nombre del grupo etario o None si está fuera de grupos definidos
     """
     if pd.isna(edad_meses):
         return 'Sin datos'
@@ -47,39 +45,22 @@ def clasificar_grupo_etario(edad_meses):
             if min_meses <= edad_meses <= max_meses:
                 return grupo
     
-    # Fuera de grupos definidos
     return None
 
 def obtener_grupos_etarios_definidos():
-    """
-    Obtiene lista ordenada de grupos etarios definidos
-    Se auto-adapta cuando se modifican los grupos
-    """
-    # Orden lógico estándar
+    """Obtiene lista ordenada de grupos etarios definidos"""
     orden_preferido = ['09-23 meses', '02-19 años', '20-59 años', '60+ años', 'Sin datos']
     grupos_ordenados = [g for g in orden_preferido if g in GRUPOS_ETARIOS.keys() or g == 'Sin datos']
     return grupos_ordenados
 
 def calcular_edad_en_meses(fecha_nacimiento, fecha_referencia):
-    """
-    Calcula edad en meses totales entre dos fechas
-    Función estándar para todo el sistema
-    
-    Args:
-        fecha_nacimiento (date): Fecha de nacimiento
-        fecha_referencia (date): Fecha de referencia (hoy)
-        
-    Returns:
-        float: Edad en meses totales
-    """
+    """Calcula edad en meses totales entre dos fechas"""
     if pd.isna(fecha_nacimiento) or pd.isna(fecha_referencia):
         return None
     
     if fecha_nacimiento > fecha_referencia:
         return None
     
-    # Usar dateutil para cálculo preciso
-    from dateutil.relativedelta import relativedelta
     diferencia = relativedelta(fecha_referencia, fecha_nacimiento)
     edad_meses_total = diferencia.years * 12 + diferencia.months
     
@@ -133,149 +114,357 @@ class FileConfig:
             directory.mkdir(parents=True, exist_ok=True)
 
 # ================================
-# CONFIGURACIÓN EPIDEMIOLÓGICA
-# ================================
-class EpidemiologicalConfig:
-    """Configuraciones específicas epidemiológicas"""
-    
-    # Límites de edad válidos (en años)
-    EDAD_MINIMA = 0
-    EDAD_MAXIMA = 90
-    
-    # Fechas límite para datos
-    FECHA_MINIMA = "2020-01-01"
-    
-    # Códigos DIVIPOLA Tolima
-    CODIGO_DPTO_TOLIMA = "73"
-    
-    # Tolerancia para similitud de nombres (veredas, municipios)
-    SIMILITUD_MINIMA = 0.75  # 75%
-    
-    # Coordenadas válidas para Colombia
-    LAT_MIN = -4.2
-    LAT_MAX = 12.6
-    LON_MIN = -81.8
-    LON_MAX = -66.9
-
-# ================================
-# MAPEOS DE COLUMNAS EXCEL
+# MAPEO CENTRALIZADO DE CÓDIGOS DIVIPOLA
 # ================================
 
-# PAIweb - Mapeo por índice de columna
-MAPEO_PAIWEB_EXCEL = {
-    1: 'municipio',                 # B
-    2: 'institucion',               # C
-    12: 'fecha_nacimiento',         # M - Para calcular edad
-    14: 'tipo_ubicacion'            # O - Espacios en blanco = Urbano
+# Cache global para códigos DIVIPOLA
+_CODIGOS_DIVIPOLA_CACHE = None
+_GPKG_TIMESTAMP = None
+
+def cargar_codigos_divipola_desde_gpkg(forzar_recarga=False):
+    """
+    Carga códigos DIVIPOLA desde .gpkg una sola vez
+    Se recarga automáticamente si el archivo se actualiza
+    """
+    global _CODIGOS_DIVIPOLA_CACHE, _GPKG_TIMESTAMP
+    
+    gpkg_path = FileConfig.TERRITORIOS_FILE
+    
+    if not gpkg_path.exists():
+        print(f"⚠️ Archivo .gpkg no encontrado: {gpkg_path}")
+        return None
+    
+    # Verificar si necesita recarga
+    current_timestamp = os.path.getmtime(gpkg_path)
+    
+    if not forzar_recarga and _CODIGOS_DIVIPOLA_CACHE is not None and _GPKG_TIMESTAMP == current_timestamp:
+        return _CODIGOS_DIVIPOLA_CACHE
+    
+    try:
+        print(f"📂 Cargando códigos DIVIPOLA desde {gpkg_path}...")
+        gdf = gpd.read_file(gpkg_path)
+        
+        # Limpiar datos
+        gdf = gdf.dropna(subset=['codigo_divipola', 'nombre'])
+        gdf['nombre'] = gdf['nombre'].str.strip().str.upper()
+        
+        # Crear diccionarios de mapeo
+        codigos_cache = {
+            # Mapeo por nombre a código DIVIPOLA completo
+            'nombre_a_codigo': dict(zip(gdf['nombre'], gdf['codigo_divipola'])),
+            
+            # Mapeo por tipo
+            'municipios': gdf[gdf['tipo'] == 'municipio'][['nombre', 'codigo_divipola', 'codigo_municipio']].to_dict('records'),
+            'veredas': gdf[gdf['tipo'] == 'vereda'][['nombre', 'codigo_divipola', 'municipio']].to_dict('records'),
+            'cabeceras': gdf[gdf['tipo'] == 'cabecera'][['nombre', 'codigo_divipola', 'municipio']].to_dict('records'),
+            
+            # Índice por municipio padre para veredas
+            'veredas_por_municipio': {},
+            
+            # DataFrame completo para consultas avanzadas
+            'dataframe': gdf.copy()
+        }
+        
+        # Crear índice de veredas por municipio
+        for _, row in gdf[gdf['tipo'] == 'vereda'].iterrows():
+            municipio = row['municipio']
+            if municipio not in codigos_cache['veredas_por_municipio']:
+                codigos_cache['veredas_por_municipio'][municipio] = {}
+            codigos_cache['veredas_por_municipio'][municipio][row['nombre']] = row['codigo_divipola']
+        
+        # Actualizar cache
+        _CODIGOS_DIVIPOLA_CACHE = codigos_cache
+        _GPKG_TIMESTAMP = current_timestamp
+        
+        print(f"✅ Códigos DIVIPOLA cargados:")
+        print(f"   - Municipios: {len(codigos_cache['municipios'])}")
+        print(f"   - Veredas: {len(codigos_cache['veredas'])}")
+        print(f"   - Cabeceras: {len(codigos_cache['cabeceras'])}")
+        
+        return codigos_cache
+        
+    except Exception as e:
+        print(f"❌ Error cargando códigos DIVIPOLA: {e}")
+        return None
+
+def buscar_codigo_municipio(nombre_municipio):
+    """
+    Busca código DIVIPOLA de municipio por nombre
+    """
+    codigos = cargar_codigos_divipola_desde_gpkg()
+    if not codigos:
+        return None
+    
+    if pd.isna(nombre_municipio):
+        return None
+    
+    nombre_norm = normalizar_nombre_territorio(nombre_municipio)
+    
+    # Buscar en municipios
+    for mun in codigos['municipios']:
+        if normalizar_nombre_territorio(mun['nombre']) == nombre_norm:
+            return mun['codigo_municipio']
+    
+    # Búsqueda aproximada
+    for mun in codigos['municipios']:
+        if nombre_norm in normalizar_nombre_territorio(mun['nombre']) or \
+           normalizar_nombre_territorio(mun['nombre']) in nombre_norm:
+            print(f"🔍 Mapeo aproximado: {nombre_municipio} → {mun['nombre']} ({mun['codigo_municipio']})")
+            return mun['codigo_municipio']
+    
+    print(f"⚠️ Municipio no encontrado: {nombre_municipio}")
+    return "73999"  # Código genérico Tolima
+
+def buscar_codigo_vereda(nombre_vereda, municipio_contexto=None):
+    """
+    Busca código DIVIPOLA completo de vereda por nombre
+    Opcionalmente usa contexto de municipio para mejorar búsqueda
+    """
+    codigos = cargar_codigos_divipola_desde_gpkg()
+    if not codigos:
+        return None
+    
+    if pd.isna(nombre_vereda):
+        return None
+    
+    nombre_norm = normalizar_nombre_territorio(nombre_vereda)
+    
+    # Si hay contexto de municipio, buscar primero ahí
+    if municipio_contexto:
+        municipio_norm = normalizar_nombre_territorio(municipio_contexto)
+        veredas_municipio = codigos['veredas_por_municipio'].get(municipio_norm, {})
+        
+        for nombre_v, codigo_v in veredas_municipio.items():
+            if normalizar_nombre_territorio(nombre_v) == nombre_norm:
+                return codigo_v
+    
+    # Búsqueda general en todas las veredas
+    for vereda in codigos['veredas']:
+        if normalizar_nombre_territorio(vereda['nombre']) == nombre_norm:
+            return vereda['codigo_divipola']
+    
+    # Búsqueda aproximada
+    for vereda in codigos['veredas']:
+        if nombre_norm in normalizar_nombre_territorio(vereda['nombre']) or \
+           normalizar_nombre_territorio(vereda['nombre']) in nombre_norm:
+            print(f"🔍 Mapeo aproximado vereda: {nombre_vereda} → {vereda['nombre']} ({vereda['codigo_divipola']})")
+            return vereda['codigo_divipola']
+    
+    print(f"⚠️ Vereda no encontrada: {nombre_vereda}")
+    return None
+
+# ================================
+# MAPEOS Y NORMALIZACIONES
+# ================================
+
+# Mapeo de nombres especiales de municipios
+MAPEO_MUNICIPIOS_ESPECIALES = {
+    "SAN SEBASTIÁN DE MARIQUITA": "MARIQUITA",
+    "SAN SEBASTIAN DE MARIQUITA": "MARIQUITA",
+    "ARMERO (GUAYABAL)": "ARMERO GUAYABAL",
+    "CARMEN DE APICALÁ": "CARMEN DE APICALA",
+    "VALLE DE SAN JUAN": "VALLE DE SAN JUAN",
 }
 
-# Casos Fiebre Amarilla - Mapeo por índice de columna
+def normalizar_nombre_territorio(nombre):
+    """Normaliza nombres de territorios para comparación"""
+    if pd.isna(nombre):
+        return None
+    
+    nombre = str(nombre).strip().upper()
+    
+    # Aplicar mapeos especiales
+    nombre = MAPEO_MUNICIPIOS_ESPECIALES.get(nombre, nombre)
+    
+    # Normalizar caracteres especiales
+    nombre = (nombre
+              .replace("Á", "A").replace("É", "E").replace("Í", "I")
+              .replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
+              .replace("  ", " ").strip())
+    
+    return nombre
+
+# ================================
+# LIMPIEZA DE FECHAS CENTRALIZADA
+# ================================
+
+def limpiar_fecha_robusta(fecha_input):
+    """
+    Limpia y convierte fechas de múltiples formatos de manera robusta
+    """
+    if pd.isna(fecha_input):
+        return None
+    
+    try:
+        # Si ya es datetime, convertir a date
+        if isinstance(fecha_input, (datetime, pd.Timestamp)):
+            return fecha_input.date()
+        
+        # Convertir a string y limpiar
+        fecha_str = str(fecha_input).strip()
+        
+        # Remover componente de tiempo si existe
+        if " " in fecha_str:
+            fecha_str = fecha_str.split(" ")[0]
+        
+        # Si está en formato timestamp de Excel
+        if fecha_str.isdigit() and len(fecha_str) > 8:
+            try:
+                return pd.to_datetime(int(fecha_str), origin='1900-01-01', unit='D').date()
+            except:
+                pass
+        
+        # Probar diferentes formatos de fecha
+        formatos_fecha = [
+            "%d/%m/%Y",    # 15/01/2024
+            "%d-%m-%Y",    # 15-01-2024
+            "%Y-%m-%d",    # 2024-01-15
+            "%m/%d/%Y",    # 01/15/2024
+            "%d/%m/%y",    # 15/01/24
+            "%d-%m-%y",    # 15-01-24
+            "%Y/%m/%d",    # 2024/01/15
+        ]
+        
+        for formato in formatos_fecha:
+            try:
+                return datetime.strptime(fecha_str, formato).date()
+            except ValueError:
+                continue
+        
+        # Si no funciona nada, intentar pandas
+        try:
+            return pd.to_datetime(fecha_str, dayfirst=True).date()
+        except:
+            pass
+        
+        return None
+        
+    except Exception:
+        return None
+
+# ================================
+# MAPEOS DE COLUMNAS PARA ARCHIVOS EXCEL
+# ================================
+
+# CASOS - Mapeo correcto: nombre_bd: nombre_excel
 MAPEO_CASOS_EXCEL = {
-    1: 'fecha_notificacion',        # B
-    2: 'semana_epidemiologica',     # C
-    6: 'primer_nombre',             # G
-    7: 'segundo_nombre',            # H
-    8: 'primer_apellido',           # I
-    9: 'segundo_apellido',          # J
-    10: 'tipo_documento',           # K
-    11: 'numero_documento',         # L
-    12: 'edad',                     # M
-    16: 'sexo',                     # Q
-    27: 'vereda_residencia',        # AB
-    32: 'ocupacion',                # AG
-    33: 'tipo_seguridad_social',    # AH
-    34: 'codigo_aseguradora',       # AI
-    35: 'pertenencia_etnica',       # AJ
-    37: 'estrato',                  # AL
-    38: 'grupo_discapacidad',       # AM
-    39: 'desplazado',               # AN
-    40: 'grupo_migrante',           # AO
-    41: 'grupo_carcelario',         # AP
-    42: 'grupo_gestante',           # AQ
-    43: 'semanas_gestacion',        # AR
-    44: 'grupo_indigena',           # AS
-    45: 'poblacion_icbf',           # AT
-    46: 'madres_comunitarias',      # AU
-    47: 'grupo_desmovilizados',     # AV
-    48: 'grupo_psiquiatricos',      # AW
-    49: 'victimas_violencia',       # AX
-    51: 'fuente_informacion',       # AZ
-    55: 'fecha_confirmacion_fa',    # BD
-    56: 'fecha_inicio_sintomas',    # BE
-    57: 'tipo_caso',                # BF
-    58: 'hospitalizado',            # BG
-    59: 'fecha_hospitalizacion',    # BH
-    60: 'condicion_final',          # BI
-    61: 'fecha_defuncion',          # BJ
-    63: 'telefono',                 # BL
-    78: 'carnet_vacunacion',        # CA
-    80: 'fecha_vacunacion',         # CC
-    
-    # 23 síntomas CD-CZ (índices 81-103)
-    81: 'fiebre',                   # CD
-    82: 'malgias',                  # CE
-    83: 'artralgia',                # CF
-    84: 'cefalea',                  # CG
-    85: 'vomito',                   # CH
-    86: 'ictericia',                # CI
-    87: 'sfaget',                   # CJ
-    88: 'oliguria',                 # CK
-    89: 'shock',                    # CL
-    90: 'bradicardi',               # CM
-    91: 'falla_rena',               # CN
-    92: 'falla_hepa',               # CO
-    93: 'hepatomega',               # CP
-    94: 'hemoptisis',               # CQ
-    95: 'hipiremia',                # CR
-    96: 'hematemesi',               # CS
-    97: 'petequias',                # CT
-    98: 'metrorragi',               # CU
-    99: 'melenas',                  # CV
-    100: 'equimosis',               # CW
-    101: 'epistaxis',               # CX
-    102: 'hematuria',               # CY
-    103: 'cas_fa',                  # CZ
-    
-    108: 'codigo_divipola_municipio_caso',  # DC
-    110: 'nombre_upgd',             # DE
-    111: 'pais_procedencia',        # DF
-    112: 'departamento_procedencia', # DG
-    113: 'municipio_procedencia',    # DH
-    114: 'pais_residencia',         # DI
-    115: 'departamento_residencia', # DJ
-    116: 'municipio_residencia',    # DK
-    117: 'departamento_notificacion', # DL
-    118: 'municipio_notificacion'   # DM
+    'fecha_notificacion': 'fec_not',
+    'semana_epidemiologica': 'semana',
+    'codigo_prestador': 'cod_pre',
+    'primer_nombre': 'pri_nom_',
+    'segundo_nombre': 'seg_nom_',
+    'primer_apellido': 'pri_ape_',
+    'segundo_apellido': 'seg_ape_',
+    'tipo_documento': 'tip_ide_',
+    'numero_documento': 'num_ide_',
+    'edad': 'edad_',
+    'sexo': 'sexo_',
+    'area_residencia': 'area_',
+    'vereda_infeccion': 'vereda_',
+    'ocupacion': 'ocupacion_',
+    'tipo_seguridad_social': 'tip_ss_',
+    'codigo_aseguradora': 'cod_ase_',
+    'pertenencia_etnica': 'per_etn_',
+    'estrato': 'estrato_',
+    'grupo_discapacidad': 'gp_discapacidad',
+    'grupo_desplazado': 'gp_desplazado',
+    'grupo_migrante': 'gp_migrante',
+    'grupo_carcelario': 'gp_carcela',
+    'grupo_gestante': 'gp_gestante',
+    'semanas_gestacion': 'sem_ges_',
+    'grupo_indigena': 'gp_indigena',
+    'poblacion_icbf': 'gp_pobicbf',
+    'madres_comunitarias': 'gp_mad_com',
+    'grupo_desmovilizados': 'gp_desmovim',
+    'grupo_psiquiatricos': 'gp_psiquiatr',
+    'victimas_violencia': 'gp_vic_viol',
+    'grupo_otros': 'gp_otros',
+    'fuente_informacion': 'fuente_',
+    'fecha_consulta': 'fec_con_',
+    'inicio_sintomas': 'ini_sin_',
+    'tipo_caso': 'tip_cas_',
+    'paciente_hospitalizado': 'pac_hos_',
+    'fecha_hospitalizacion': 'fec_hos_',
+    'condicion_final': 'con_fin_',
+    'fecha_defuncion': 'fec_def_',
+    'telefono': 'telefono_',
+    'fecha_nacimiento': 'fecha_nto_',
+    'certificado_defuncion': 'cer_def_',
+    'carnet_vacunacion': 'carne_vacu',
+    'fecha_vacunacion': 'fec_fa1_',
+    'fiebre': 'fiebre',
+    'mialgias': 'malgias',
+    'artralgias': 'artralgias_',
+    'cefalea': 'cefalea',
+    'vomitos': 'vomito',
+    'ictericia': 'ictericia',
+    'sangrado': 'sfaget',
+    'oliguria': 'oliguria',
+    'shock': 'shock',
+    'bradicardia': 'bradicardi',
+    'falla_renal': 'falla_renal',
+    'falla_hepatica': 'falla_hepa',
+    'hepatomegalia': 'hepatomega',
+    'hemoptisis': 'hemoptisis',
+    'hiperemia': 'hipiremia',
+    'hematemesis': 'hematemesi',
+    'petequias': 'petequias',
+    'metrorragia': 'metrorragi',
+    'melenas': 'melenas',
+    'equimosis': 'equimosis',
+    'epistaxis': 'epistaxis',
+    'hematuria': 'hematuria',
+    'caso_familiar': 'cas_fam',
+    'codigo_municipio_infeccion': 'codmuninfe',
+    'nombre_upgd': 'nom_upgd',
+    'pais_procedencia': 'npais_procen',
+    'departamento_procedencia': 'ndep_proce',
+    'municipio_procedencia': 'nmun_proce',
+    'pais_residencia': 'npais_resi',
+    'departamento_residencia': 'ndep_resi',
+    'municipio_residencia': 'nmun_resi',
+    'departamento_notificacion': 'ndep_notif',
+    'municipio_notificacion': 'nmun_notif'
 }
 
-# Población SISBEN - Mapeo sin headers por índice
+# EPIZOOTIAS - Mapeo correcto: nombre_bd: nombre_excel
+MAPEO_EPIZOOTIAS_EXCEL = {
+    'municipio': 'MUNICIPIO',
+    'vereda': 'VEREDA',
+    'fecha_recoleccion': 'FECHA_RECOLECCION',
+    'informante': 'INFORMANTE',
+    'descripcion': 'DESCRIPCION',
+    'fecha_notificacion': 'FECHA_NOTIFICACION',
+    'especie': 'ESPECIE',
+    'latitud': 'LATITUD',
+    'longitud': 'LONGITUD',
+    'fecha_envio_muestra': 'FECHA_ENVIO_MUESTRA',
+    'resultado_pcr': 'RESULTADO_PCR',
+    'fecha_resultado_pcr': 'FECHA_RESULTADO_PCR',
+    'resultado_histopatologia': 'RESULTADO_HISTOPATOLOGIA',
+    'fecha_resultado_histopatologia': 'FECHA_RESULTADO_HISTOPATOLOGIA'
+}
+
+# VACUNACIÓN PAIweb - Solo columnas necesarias
+MAPEO_VACUNACION_EXCEL = {
+    'departamento': 'Departamento',
+    'municipio': 'Municipio',
+    'institucion': 'Institucion',
+    'fecha_aplicacion': 'fechaaplicacion',
+    'fecha_nacimiento': 'FechaNacimiento',
+    'tipo_ubicacion': 'TipoUbicación'
+}
+
+# POBLACIÓN SISBEN - Por índice de columna (sin headers)
 MAPEO_POBLACION_SISBEN = {
-    1: 'codigo_municipio',          # col_1
-    2: 'municipio',                 # col_2
-    6: 'corregimiento',             # col_6
-    8: 'vereda',                    # col_8
-    10: 'barrio',                   # col_10
-    17: 'documento',                # col_17
-    18: 'fecha_nacimiento'          # col_18
+    'codigo_municipio': 1,     # col_1
+    'municipio': 2,            # col_2
+    'corregimiento': 6,        # col_6
+    'vereda': 8,               # col_8
+    'barrio': 10,              # col_10
+    'documento': 17,           # col_17
+    'fecha_nacimiento': 18     # col_18
 }
-
-# Epizootias - Orden de columnas
-COLUMNAS_EPIZOOTIAS = [
-    'municipio',                    # 0
-    'vereda',                       # 1
-    'fecha_recoleccion',            # 2
-    'informante',                   # 3
-    'descripcion',                  # 4
-    'fecha_notificacion',           # 5
-    'especie',                      # 6
-    'latitud',                      # 7
-    'longitud',                     # 8
-    'fecha_envio_muestra',          # 9
-    'resultado_pcr',                # 10
-    'fecha_resultado_pcr',          # 11
-    'resultado_histopatologia',     # 12
-    'fecha_resultado_histopatologia' # 13
-]
 
 # ================================
 # FUNCIONES DE UTILIDAD
@@ -287,22 +476,49 @@ def normalizar_texto_snake_case(texto):
         return None
     
     import re
-    # Convertir a snake_case
     texto = str(texto).strip()
     texto = re.sub(r'[^\w\s-]', '', texto)  # Remover caracteres especiales
     texto = re.sub(r'[-\s]+', '_', texto)   # Espacios y guiones a underscore
     return texto.lower()
 
-def validar_grupos_etarios_configuracion():
-    """Valida que la configuración de grupos etarios sea consistente"""
-    grupos = list(GRUPOS_ETARIOS.keys())
-    print("Configuración actual de grupos etarios:")
-    for grupo, (min_meses, max_meses) in GRUPOS_ETARIOS.items():
-        if max_meses:
-            print(f"  {grupo}: {min_meses}-{max_meses} meses")
-        else:
-            print(f"  {grupo}: {min_meses}+ meses")
-    return grupos
+def cargar_primera_hoja_excel(archivo_path):
+    """
+    Carga la primera hoja de un archivo Excel sin especificar nombre
+    """
+    try:
+        # Leer primera hoja disponible
+        excel_file = pd.ExcelFile(archivo_path)
+        primera_hoja = excel_file.sheet_names[0]
+        
+        print(f"📋 Hojas disponibles en {archivo_path}: {excel_file.sheet_names}")
+        print(f"📄 Usando primera hoja: {primera_hoja}")
+        
+        df = pd.read_excel(archivo_path, sheet_name=primera_hoja)
+        return df, primera_hoja
+        
+    except Exception as e:
+        print(f"❌ Error cargando Excel: {e}")
+        return None, None
+
+def determinar_ubicacion_urbano_rural(vereda, corregimiento, barrio):
+    """
+    Determina si es urbano o rural basado en las reglas del sistema
+    (Función original del script población.py)
+    """
+    # Normalizar valores
+    vereda = str(vereda).strip().upper() if pd.notna(vereda) else "SIN VEREDA"
+    corregimiento = str(corregimiento).strip().upper() if pd.notna(corregimiento) else "SIN CORREGIMIENTO"
+    barrio = str(barrio).strip().upper() if pd.notna(barrio) else "SIN BARRIO"
+    
+    # REGLAS RURALES
+    if vereda != "SIN VEREDA":
+        return 'Rural'
+    
+    if vereda == "SIN VEREDA" and corregimiento not in ["SIN CORREGIMIENTO", "CABECERA MUNICIPAL"]:
+        return 'Rural'
+    
+    # REGLAS URBANAS (por defecto)
+    return 'Urbano'
 
 # ================================
 # VARIABLES GLOBALES DE CONVENIENCIA
@@ -311,12 +527,32 @@ DATABASE_URL = DatabaseConfig.get_connection_url()
 DATA_DIR = FileConfig.DATA_DIR
 LOGS_DIR = FileConfig.LOGS_DIR
 
-if __name__ == "__main__":
-    # Verificar configuración
+def validar_configuracion():
+    """Valida que la configuración sea correcta"""
+    print("⚙️ Validando configuración Sistema Epidemiológico Tolima")
+    print("=" * 60)
+    
+    # Validar directorios
     FileConfig.create_directories()
-    print("Configuración Sistema Epidemiológico Tolima")
-    print("=" * 50)
-    validar_grupos_etarios_configuracion()
-    print(f"Base de datos: {DatabaseConfig.HOST}:{DatabaseConfig.PORT}")
-    print(f"Directorio datos: {DATA_DIR}")
-    print("Sistema configurado correctamente")
+    print(f"📁 Directorios creados/verificados")
+    
+    # Validar grupos etarios
+    grupos = obtener_grupos_etarios_definidos()
+    print(f"👥 Grupos etarios configurados: {len(grupos)}")
+    for grupo in grupos:
+        print(f"   - {grupo}")
+    
+    # Validar conexión BD
+    print(f"🐘 Base de datos: {DatabaseConfig.HOST}:{DatabaseConfig.PORT}")
+    
+    # Cargar códigos DIVIPOLA
+    codigos = cargar_codigos_divipola_desde_gpkg()
+    if codigos:
+        print(f"🗺️ Códigos DIVIPOLA cargados correctamente")
+    else:
+        print(f"⚠️ No se pudieron cargar códigos DIVIPOLA")
+    
+    print("✅ Configuración validada correctamente")
+
+if __name__ == "__main__":
+    validar_configuracion()

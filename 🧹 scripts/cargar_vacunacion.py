@@ -1,355 +1,282 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Script PAIweb Adaptado para PostgreSQL - SIN DATOS PERSONALES
-Versión optimizada para Sistema Epidemiológico Tolima
-Basado en tu script original pero eliminando datos personales completamente
+cargar_vacunacion.py - PAIweb → PostgreSQL (Adaptado)
+Procesamiento de datos de vacunación con cálculo correcto de edad usando FechaNacimiento
+Solo columnas necesarias, datos completamente anónimos
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-import re
+from dateutil.relativedelta import relativedelta
 import os
 import warnings
 from sqlalchemy import create_engine, text
-import psycopg2
-from psycopg2.extras import execute_values
+
+# Importar configuración centralizada
+from config import (
+    DATABASE_URL, MAPEO_VACUNACION_EXCEL,
+    clasificar_grupo_etario, calcular_edad_en_meses,
+    limpiar_fecha_robusta, cargar_primera_hoja_excel,
+    buscar_codigo_municipio, normalizar_nombre_territorio,
+    MAPEO_MUNICIPIOS_ESPECIALES
+)
 
 warnings.filterwarnings("ignore")
 
-# Configuración base de datos
-DATABASE_URL = "postgresql://tolima_admin:tolima2025!@localhost:5432/epidemiologia_tolima"
-
-def limpiar_paiweb_fiebre_amarilla_anonimo(archivo_excel, hoja="Vacunas"):
+def procesar_paiweb_vacunacion(archivo_excel):
     """
-    Limpia y procesa datos de PAIweb ELIMINANDO todos los datos personales
-    Mantiene solo información epidemiológicamente relevante
+    Procesa datos de vacunación PAIweb ELIMINANDO datos personales
+    Usa FechaNacimiento para cálculo correcto de edad
     """
-
-    print("🔄 Cargando archivo Excel PAIweb...")
-    df = pd.read_excel(archivo_excel, sheet_name=hoja)
-    print(f"📊 Registros iniciales: {len(df):,}")
-
-    # ================================
-    # 1. ELIMINAR COLUMNAS PERSONALES Y NO NECESARIAS
-    # ================================
-    columnas_eliminar = [
-        "nombrebiologico", "dosis", "Actualizacion",
-        # ELIMINAR TODOS LOS DATOS PERSONALES
-        "PrimerNombre", "SegundoNombre", "PrimerApellido", "SegundoApellido",
-        "Documento", "tipoDocumento", "FechaNacimiento"
-    ]
+    print("💉 PROCESANDO VACUNACIÓN PAIweb → POSTGRESQL")
+    print("=" * 55)
     
-    # Eliminar solo las columnas que existen
-    df = df.drop(columns=[col for col in columnas_eliminar if col in df.columns])
-    print(f"🗑️ Datos personales eliminados completamente")
-
-    # ================================
-    # 2. MAPEO Y NORMALIZACIÓN DE MUNICIPIOS
-    # ================================
-    def normalizar_municipio(municipio):
-        if pd.isna(municipio):
-            return None
-
-        municipio = str(municipio).strip().upper()
-
-        # Mapeo específico
-        mapeo_municipios = {
-            "SAN SEBASTIÁN DE MARIQUITA": "MARIQUITA",
-            "SAN SEBASTIAN DE MARIQUITA": "MARIQUITA",
-        }
-
-        if municipio in mapeo_municipios:
-            municipio = mapeo_municipios[municipio]
-
-        # Convertir a Title Case para normalizar
-        return municipio.title()
-
-    df["Municipio"] = df["Municipio"].apply(normalizar_municipio)
-
-    # ================================
-    # 3. LIMPIEZA Y VALIDACIÓN DE FECHAS
-    # ================================
-    def limpiar_fecha(fecha_str):
-        if pd.isna(fecha_str):
-            return None
-
-        # Convertir a string y limpiar
-        fecha_str = str(fecha_str).strip()
-
-        # Remover partes de tiempo si existen
-        if " " in fecha_str:
-            fecha_str = fecha_str.split(" ")[0]
-
-        # Intentar diferentes formatos
-        formatos = ["%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%m/%d/%Y"]
-
-        for formato in formatos:
-            try:
-                return datetime.strptime(fecha_str, formato).date()
-            except:
-                continue
-
-        return None
-
-    df["fechaaplicacion"] = df["fechaaplicacion"].apply(limpiar_fecha)
-
-    # ================================
-    # 4. CALCULAR EDAD SIN FECHA DE NACIMIENTO
-    # ================================
-    # Nota: Si no tienes fecha de nacimiento en tu archivo, 
-    # necesitarás usar edad directa del archivo
-    fecha_corte = date.today()
-
-    def procesar_edad_directa(row):
-        """
-        Procesa edad usando campos disponibles sin fecha nacimiento
-        """
-        # Si tienes campo edad directo, usarlo
-        if 'edad_' in row.index and pd.notna(row.get('edad_')):
-            return int(row['edad_'])
+    inicio = datetime.now()
+    
+    try:
+        # 1. CARGAR ARCHIVO EXCEL (primera hoja)
+        print(f"📂 Cargando: {archivo_excel}")
         
-        # Si tienes unidad de medida de edad, calcular
-        if 'uni_med_' in row.index and 'edad_' in row.index:
-            edad_val = row.get('edad_', 0)
-            unidad = str(row.get('uni_med_', 'años')).lower()
-            
-            if 'año' in unidad or 'anos' in unidad:
-                return int(edad_val)
-            elif 'mes' in unidad:
-                return max(0, int(edad_val / 12))  # Convertir meses a años
-            elif 'día' in unidad or 'dia' in unidad:
-                return max(0, int(edad_val / 365))  # Convertir días a años
+        df, nombre_hoja = cargar_primera_hoja_excel(archivo_excel)
+        if df is None:
+            return None
         
-        return None
-
-    # Aplicar procesamiento de edad
-    df['edad_anos'] = df.apply(procesar_edad_directa, axis=1)
-
-    # ================================
-    # 5. CLASIFICACIÓN GRUPOS ETARIOS
-    # ================================
-    def clasificar_grupo_etario(edad):
-        if pd.isna(edad) or edad is None:
-            return "Sin datos"
-
-        if edad < 0.75:  # Menor de 9 meses
-            return "Menor de 9 meses"
-        elif edad < 2:  # 09-23 meses
-            return "09-23 meses"
-        elif edad <= 19:  # 02-19 años
-            return "02-19 años"
-        elif edad <= 59:  # 20-59 años
-            return "20-59 años"
-        else:  # 60+ años
-            return "60+ años"
-
-    df["grupo_etario"] = df["edad_anos"].apply(clasificar_grupo_etario)
-
-    # ================================
-    # 6. NORMALIZAR UBICACIÓN
-    # ================================
-    def normalizar_tipo_ubicacion(tipo):
-        if pd.isna(tipo) or str(tipo).strip() == "":
-            return "Urbano"
-        tipo_str = str(tipo).strip().lower()
-        if 'rural' in tipo_str or 'vereda' in tipo_str:
-            return "Rural"
+        print(f"📊 Registros iniciales: {len(df):,}")
+        print(f"📋 Columnas disponibles: {len(df.columns)}")
+        
+        # 2. MAPEAR SOLO COLUMNAS NECESARIAS
+        print("🔄 Mapeando columnas necesarias...")
+        
+        # Verificar y mapear columnas usando configuración centralizada
+        columnas_mapeadas = {}
+        columnas_faltantes = []
+        
+        for nombre_bd, nombre_excel in MAPEO_VACUNACION_EXCEL.items():
+            if nombre_excel in df.columns:
+                columnas_mapeadas[nombre_excel] = nombre_bd
+                print(f"   ✅ {nombre_excel} → {nombre_bd}")
+            else:
+                columnas_faltantes.append(nombre_excel)
+                print(f"   ❌ {nombre_excel} → NO ENCONTRADA")
+        
+        if columnas_faltantes:
+            print(f"⚠️ Columnas faltantes: {columnas_faltantes}")
+            print("⚠️ Se continuará con las columnas disponibles")
+        
+        # Renombrar columnas encontradas
+        df = df.rename(columns=columnas_mapeadas)
+        
+        # Seleccionar solo columnas mapeadas (eliminar datos personales)
+        columnas_disponibles = list(columnas_mapeadas.values())
+        df = df[columnas_disponibles].copy()
+        
+        print(f"🔒 Datos personales completamente eliminados")
+        print(f"📋 Columnas finales: {list(df.columns)}")
+        
+        # 3. LIMPIAR Y VALIDAR FECHAS
+        print("📅 Procesando fechas...")
+        
+        # Limpiar fecha de aplicación
+        if 'fecha_aplicacion' in df.columns:
+            df['fecha_aplicacion'] = df['fecha_aplicacion'].apply(limpiar_fecha_robusta)
+            fechas_app_nulas = df['fecha_aplicacion'].isna().sum()
+            print(f"   Fechas aplicación nulas: {fechas_app_nulas:,}")
+        
+        # Limpiar fecha de nacimiento (CRÍTICO para cálculo edad)
+        if 'fecha_nacimiento' in df.columns:
+            df['fecha_nacimiento'] = df['fecha_nacimiento'].apply(limpiar_fecha_robusta)
+            fechas_nac_nulas = df['fecha_nacimiento'].isna().sum()
+            print(f"   Fechas nacimiento nulas: {fechas_nac_nulas:,}")
         else:
-            return "Urbano"
-
-    df["TipoUbicación"] = df["TipoUbicación"].apply(normalizar_tipo_ubicacion)
-
-    # ================================
-    # 7. VALIDACIONES Y FILTRADO
-    # ================================
-    registros_iniciales = len(df)
-
-    # Filtrar registros con datos básicos válidos
-    df = df.dropna(subset=["fechaaplicacion", "Municipio"])
-
-    # Filtrar fechas coherentes
-    df = df[df["fechaaplicacion"] <= fecha_corte]
-    df = df[df["fechaaplicacion"] >= date(2020, 1, 1)]  # Filtro fecha mínima
-
-    # Filtrar edades razonables (tu filtro actual de >90 años)
-    df = df[(df["edad_anos"] >= 0) & (df["edad_anos"] <= 90)]
-
-    print(f"📊 Registros después de validaciones: {len(df):,}")
-    print(f"📊 Registros excluidos: {registros_iniciales - len(df):,}")
-
-    # ================================
-    # 8. GENERAR CÓDIGO DE MUNICIPIO (tu función actual)
-    # ================================
-    def generar_codigo_municipio(municipio):
-        if pd.isna(municipio):
+            print("❌ ERROR CRÍTICO: No se encontró columna FechaNacimiento")
             return None
+        
+        # 4. CALCULAR EDAD CORRECTAMENTE USANDO FECHA DE NACIMIENTO
+        print("🔢 Calculando edad desde fecha de nacimiento...")
+        
+        fecha_referencia = date.today()
+        
+        def calcular_edad_completa(fecha_nac, fecha_app):
+            """Calcula edad usando fecha nacimiento y fecha aplicación"""
+            if pd.isna(fecha_nac):
+                return None, None
+            
+            # Usar fecha aplicación si está disponible, sino fecha actual
+            fecha_ref = fecha_app if pd.notna(fecha_app) else fecha_referencia
+            
+            if isinstance(fecha_ref, pd.Timestamp):
+                fecha_ref = fecha_ref.date()
+            
+            # Calcular meses totales y años
+            edad_meses = calcular_edad_en_meses(fecha_nac, fecha_ref)
+            if edad_meses is not None:
+                edad_anos = edad_meses / 12
+                return edad_meses, edad_anos
+            
+            return None, None
+        
+        # Aplicar cálculo de edad
+        edades_data = df.apply(
+            lambda row: calcular_edad_completa(
+                row.get('fecha_nacimiento'), 
+                row.get('fecha_aplicacion')
+            ), axis=1
+        )
+        
+        df['edad_meses'] = [x[0] if x else None for x in edades_data]
+        df['edad_anos'] = [x[1] if x else None for x in edades_data]
+        
+        print(f"   ✅ Edades calculadas usando fecha nacimiento")
+        
+        # 5. CLASIFICAR GRUPOS ETARIOS
+        print("👥 Clasificando grupos etarios...")
+        
+        df['grupo_etario'] = df['edad_meses'].apply(clasificar_grupo_etario)
+        
+        # Estadísticas de grupos etarios
+        grupos_dist = df['grupo_etario'].value_counts()
+        print(f"   Distribución grupos etarios:")
+        for grupo, cantidad in grupos_dist.items():
+            porcentaje = (cantidad / len(df)) * 100
+            print(f"     {grupo}: {cantidad:,} ({porcentaje:.1f}%)")
+        
+        # 6. NORMALIZAR MUNICIPIOS
+        print("🏙️ Normalizando municipios...")
+        
+        def normalizar_municipio_paiweb(municipio):
+            if pd.isna(municipio):
+                return None
+            
+            municipio = str(municipio).strip().upper()
+            
+            # Aplicar mapeos especiales desde config
+            municipio = MAPEO_MUNICIPIOS_ESPECIALES.get(municipio, municipio)
+            
+            return municipio.title()
+        
+        if 'municipio' in df.columns:
+            df['municipio'] = df['municipio'].apply(normalizar_municipio_paiweb)
+        
+        # 7. ASIGNAR CÓDIGOS DIVIPOLA
+        print("🔢 Asignando códigos DIVIPOLA...")
+        
+        if 'municipio' in df.columns:
+            df['codigo_municipio'] = df['municipio'].apply(buscar_codigo_municipio)
+            
+            # Estadísticas de mapeo
+            codigos_asignados = df['codigo_municipio'].notna().sum()
+            municipios_unicos = df['municipio'].nunique()
+            print(f"   Códigos asignados: {codigos_asignados:,}/{len(df):,}")
+            print(f"   Municipios únicos: {municipios_unicos}")
+        
+        # 8. NORMALIZAR UBICACIÓN
+        print("📍 Normalizando tipo de ubicación...")
+        
+        def normalizar_ubicacion(tipo):
+            if pd.isna(tipo) or str(tipo).strip() == "":
+                return "Urbano"  # Por defecto urbano
+            
+            tipo_str = str(tipo).strip().lower()
+            if any(keyword in tipo_str for keyword in ['rural', 'vereda', 'campo']):
+                return "Rural"
+            else:
+                return "Urbano"
+        
+        if 'tipo_ubicacion' in df.columns:
+            df['tipo_ubicacion'] = df['tipo_ubicacion'].apply(normalizar_ubicacion)
+        
+        # 9. VALIDACIONES Y FILTROS
+        print("🔍 Aplicando validaciones...")
+        
+        registros_iniciales = len(df)
+        
+        # Filtrar registros con datos básicos válidos
+        columnas_criticas = ['fecha_aplicacion', 'municipio', 'fecha_nacimiento']
+        columnas_criticas_disponibles = [col for col in columnas_criticas if col in df.columns]
+        
+        df = df.dropna(subset=columnas_criticas_disponibles)
+        
+        # Filtrar fechas coherentes
+        if 'fecha_aplicacion' in df.columns:
+            fecha_min = date(2020, 1, 1)
+            fecha_max = date.today()
+            df = df[
+                (df['fecha_aplicacion'] >= fecha_min) & 
+                (df['fecha_aplicacion'] <= fecha_max)
+            ]
+        
+        # Filtrar edades razonables (0-90 años)
+        if 'edad_anos' in df.columns:
+            df = df[
+                (df['edad_anos'] >= 0) & 
+                (df['edad_anos'] <= 90)
+            ]
+        
+        print(f"   Registros después validaciones: {len(df):,}")
+        print(f"   Registros excluidos: {registros_iniciales - len(df):,}")
+        
+        # 10. CAMPOS CALCULADOS AUTOMÁTICOS
+        print("⚙️ Generando campos calculados...")
+        
+        if 'fecha_aplicacion' in df.columns:
+            df['año'] = df['fecha_aplicacion'].dt.year
+            df['mes'] = df['fecha_aplicacion'].dt.month
+            df['semana_epidemiologica'] = df['fecha_aplicacion'].dt.isocalendar().week
+        
+        # 11. ELIMINAR FECHA DE NACIMIENTO (mantener solo edad calculada)
+        print("🔒 Eliminando fecha nacimiento para anonimización...")
+        
+        if 'fecha_nacimiento' in df.columns:
+            df = df.drop(columns=['fecha_nacimiento'])
+            print("   ✅ Fecha nacimiento eliminada (solo edad conservada)")
+        
+        # 12. ESTADÍSTICAS FINALES
+        print(f"\n📊 ESTADÍSTICAS FINALES - DATOS ANÓNIMOS:")
+        print(f"   Total registros procesados: {len(df):,}")
+        
+        if 'municipio' in df.columns:
+            print(f"   Municipios únicos: {df['municipio'].nunique()}")
+            
+        if 'institucion' in df.columns:
+            print(f"   Instituciones únicas: {df['institucion'].nunique()}")
+        
+        if 'tipo_ubicacion' in df.columns:
+            dist_ubicacion = df['tipo_ubicacion'].value_counts()
+            print(f"   Distribución urbano/rural:")
+            for ubicacion, cantidad in dist_ubicacion.items():
+                porcentaje = (cantidad / len(df)) * 100
+                print(f"     {ubicacion}: {cantidad:,} ({porcentaje:.1f}%)")
+        
+        if 'edad_anos' in df.columns:
+            edad_stats = df['edad_anos'].describe()
+            print(f"   Estadísticas edad:")
+            print(f"     Mínima: {edad_stats['min']:.1f} años")
+            print(f"     Máxima: {edad_stats['max']:.1f} años")
+            print(f"     Promedio: {edad_stats['mean']:.1f} años")
+        
+        print("✅ Procesamiento PAIweb completado")
+        print("🔒 CERO datos personales mantenidos")
+        
+        return df
+        
+    except Exception as e:
+        print(f"❌ Error procesando PAIweb: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
-        # Mapeo completo de municipios del Tolima
-        codigos_municipios = {
-            "Ibagué": "73001",
-            "Mariquita": "73408", 
-            "Armero (Guayabal)": "73055",
-            "Armero Guayabal": "73055",
-            "Armero": "73055",
-            "Ambalema": "73024",
-            "Anzoátegui": "73043",
-            "Ataco": "73067",
-            "Cajamarca": "73124",
-            "Carmen De Apicalá": "73148",
-            "Carmen De Apicala": "73148",
-            "Casabianca": "73152",
-            "Chaparral": "73168",
-            "Coello": "73200",
-            "Coyaima": "73217",
-            "Cunday": "73226",
-            "Dolores": "73236",
-            "Espinal": "73268",
-            "Falan": "73270",
-            "Flandes": "73275",
-            "Fresno": "73283",
-            "Guamo": "73319",
-            "Herveo": "73347",
-            "Honda": "73349",
-            "Icononzo": "73352",
-            "Lérida": "73408",
-            "Lerida": "73408",
-            "Líbano": "73411",
-            "Libano": "73411",
-            "Melgar": "73449",
-            "Murillo": "73461",
-            "Natagaima": "73483",
-            "Ortega": "73504",
-            "Palocabildo": "73520",
-            "Piedras": "73547",
-            "Planadas": "73555",
-            "Prado": "73563",
-            "Purificación": "73585",
-            "Purificacion": "73585",
-            "Rioblanco": "73616",
-            "Roncesvalles": "73622",
-            "Rovira": "73624",
-            "Saldaña": "73675",
-            "Saldana": "73675",
-            "San Antonio": "73678",
-            "San Luis": "73686",
-            "Santa Isabel": "73770",
-            "Suárez": "73854",
-            "Suarez": "73854",
-            "Valle De San Juan": "73861",
-            "Venadillo": "73873",
-            "Villahermosa": "73870",
-            "Villarrica": "73873",
-        }
-
-        # Buscar código exacto
-        municipio_norm = str(municipio).strip().title()
-        codigo = codigos_municipios.get(municipio_norm)
-
-        # Si no encuentra exacto, buscar coincidencias parciales
-        if codigo is None:
-            municipio_clean = (
-                municipio_norm.upper()
-                .replace("Á", "A").replace("É", "E").replace("Í", "I")
-                .replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
-            )
-
-            for mun_mapa, cod_mapa in codigos_municipios.items():
-                mun_clean = (
-                    mun_mapa.upper()
-                    .replace("Á", "A").replace("É", "E").replace("Í", "I")
-                    .replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
-                )
-                if municipio_clean in mun_clean or mun_clean in municipio_clean:
-                    codigo = cod_mapa
-                    break
-
-        if codigo is None:
-            print(f"⚠️ Municipio no encontrado: {municipio_norm}")
-            codigo = "73999"  # Código genérico Tolima
-
-        return codigo
-
-    df["codigo_municipio"] = df["Municipio"].apply(generar_codigo_municipio)
-
-    # ================================
-    # 9. SELECCIONAR SOLO CAMPOS EPIDEMIOLÓGICOS ANÓNIMOS
-    # ================================
-    df_anonimo = df.rename(columns={
-        "Municipio": "municipio",
-        "Institucion": "institucion", 
-        "fechaaplicacion": "fecha_aplicacion",
-        "TipoUbicación": "tipo_ubicacion"
-    })
-
-    # Seleccionar SOLO campos epidemiológicos (SIN datos personales)
-    columnas_finales = [
-        "codigo_municipio",
-        "municipio",
-        "institucion",
-        "fecha_aplicacion", 
-        "tipo_ubicacion",
-        "edad_anos",
-        "grupo_etario"
-    ]
-
-    df_final = df_anonimo[columnas_finales].copy()
-
-    # ================================
-    # 10. CAMPOS CALCULADOS AUTOMÁTICOS
-    # ================================
-    df_final['año'] = df_final['fecha_aplicacion'].dt.year
-    df_final['mes'] = df_final['fecha_aplicacion'].dt.month
-    df_final['semana_epidemiologica'] = df_final['fecha_aplicacion'].dt.isocalendar().week
-
-    # ================================
-    # 11. ESTADÍSTICAS FINALES (SIN datos personales)
-    # ================================
-    print(f"\n{'='*60}")
-    print("ESTADÍSTICAS FINALES - DATOS ANÓNIMOS")
-    print("=" * 60)
-
-    total_registros = len(df_final)
-    print(f"📊 Total registros procesados: {total_registros:,}")
-    print(f"📍 Municipios únicos: {df_final['municipio'].nunique()}")
-    print(f"🏥 Instituciones únicas: {df_final['institucion'].nunique()}")
+def cargar_vacunacion_postgresql(df_vacunacion, tabla="vacunacion_fiebre_amarilla"):
+    """
+    Carga datos de vacunación anónimos a PostgreSQL
+    """
+    if df_vacunacion is None or len(df_vacunacion) == 0:
+        print("❌ No hay datos de vacunación para cargar")
+        return False
     
-    print(f"\n🏙️ DISTRIBUCIÓN URBANO/RURAL:")
-    dist_ubicacion = df_final["tipo_ubicacion"].value_counts()
-    for ubicacion, cantidad in dist_ubicacion.items():
-        porcentaje = (cantidad / total_registros) * 100
-        print(f"  {ubicacion}: {cantidad:,} ({porcentaje:.1f}%)")
-
-    print(f"\n👥 DISTRIBUCIÓN POR GRUPOS ETARIOS:")
-    dist_grupos = df_final["grupo_etario"].value_counts()
-    grupos_orden = [
-        "Menor de 9 meses", "09-23 meses", "02-19 años", "20-59 años", "60+ años", "Sin datos"
-    ]
-    for grupo in grupos_orden:
-        if grupo in dist_grupos.index:
-            cantidad = dist_grupos[grupo]
-            porcentaje = (cantidad / total_registros) * 100
-            print(f"  {grupo}: {cantidad:,} ({porcentaje:.1f}%)")
-
-    print(f"\n📅 ESTADÍSTICAS DE EDAD:")
-    edad_valida = df_final['edad_anos'].dropna()
-    if len(edad_valida) > 0:
-        print(f"  Edad mínima: {edad_valida.min():.0f} años")
-        print(f"  Edad máxima: {edad_valida.max():.0f} años") 
-        print(f"  Edad promedio: {edad_valida.mean():.1f} años")
-
-    print("✅ Procesamiento ANÓNIMO completado!")
-    print("🔒 CERO datos personales mantenidos")
-
-    return df_final
-
-
-def cargar_postgresql_optimizado(df_anonimo, tabla="vacunacion_fiebre_amarilla"):
-    """
-    Carga datos anónimos a PostgreSQL de forma optimizada
-    """
-    print(f"\n💾 Cargando {len(df_anonimo):,} registros a PostgreSQL...")
+    print(f"\n💾 CARGANDO {len(df_vacunacion):,} REGISTROS A POSTGRESQL")
+    print("=" * 55)
     
     try:
         engine = create_engine(DATABASE_URL, pool_size=10, max_overflow=20)
@@ -359,119 +286,144 @@ def cargar_postgresql_optimizado(df_anonimo, tabla="vacunacion_fiebre_amarilla")
             conn.execute(text("SELECT 1"))
         print("✅ Conexión PostgreSQL exitosa")
         
-        # Cargar datos (REPLACE completo para históricos)
+        # Añadir metadatos
+        df_vacunacion['fecha_carga'] = datetime.now()
+        df_vacunacion['fuente'] = 'PAIweb'
+        
+        # Cargar datos con optimización por lotes
         start_time = datetime.now()
         
-        df_anonimo.to_sql(
+        df_vacunacion.to_sql(
             tabla,
             engine,
-            if_exists='replace',  # Reemplaza todo (datos históricos completos)
+            if_exists='replace',  # Reemplazar datos históricos completos
             index=False,
-            method='multi',  # Carga por lotes optimizada
-            chunksize=5000   # 5K registros por lote
+            method='multi',
+            chunksize=5000
         )
         
         load_time = datetime.now() - start_time
         print(f"⏱️ Carga completada en: {load_time.total_seconds():.1f} segundos")
         
-        # Verificar carga y generar estadísticas
+        # Verificar carga y estadísticas
         with engine.connect() as conn:
-            # Contar registros
             total_bd = conn.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
             print(f"📊 Total registros en BD: {total_bd:,}")
             
-            # Estadísticas rápidas
-            stats = conn.execute(text(f"""
+            # Estadísticas de la carga
+            stats = pd.read_sql(text(f"""
                 SELECT 
                     COUNT(DISTINCT codigo_municipio) as municipios,
                     COUNT(DISTINCT institucion) as instituciones,
                     MIN(fecha_aplicacion) as fecha_min,
                     MAX(fecha_aplicacion) as fecha_max,
-                    COUNT(DISTINCT año) as años_datos
+                    COUNT(DISTINCT año) as años_datos,
+                    ROUND(AVG(edad_anos), 1) as edad_promedio
                 FROM {tabla}
-            """)).fetchone()
+                WHERE fecha_aplicacion IS NOT NULL
+            """), conn)
             
-            print(f"📍 Municipios en BD: {stats[0]}")
-            print(f"🏥 Instituciones en BD: {stats[1]}")
-            print(f"📅 Rango fechas: {stats[2]} a {stats[3]}")
-            print(f"📊 Años con datos: {stats[4]}")
+            if len(stats) > 0:
+                s = stats.iloc[0]
+                print(f"📍 Municipios: {s['municipios']}")
+                print(f"🏥 Instituciones: {s['instituciones']}")
+                print(f"📅 Período: {s['fecha_min']} a {s['fecha_max']}")
+                print(f"📊 Años con datos: {s['años_datos']}")
+                print(f"👥 Edad promedio: {s['edad_promedio']} años")
             
+            # Verificar vista de coberturas
+            try:
+                cobertura_test = pd.read_sql(text("""
+                    SELECT COUNT(*) as registros 
+                    FROM v_coberturas_dashboard 
+                    LIMIT 1
+                """), conn)
+                
+                if len(cobertura_test) > 0:
+                    print(f"📈 Vista coberturas: {cobertura_test.iloc[0]['registros']:,} registros")
+                else:
+                    print("📈 Vista coberturas: Funcional")
+            except Exception as e:
+                print(f"⚠️ Error vista coberturas: {e}")
+        
         # Crear backup CSV
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_file = f"backups/vacunacion_backup_{timestamp}.csv"
-        df_anonimo.to_csv(backup_file, index=False, encoding='utf-8-sig')
-        print(f"💾 Backup CSV creado: {backup_file}")
+        
+        os.makedirs("backups", exist_ok=True)
+        df_vacunacion.to_csv(backup_file, index=False, encoding='utf-8-sig')
+        print(f"💾 Backup creado: {backup_file}")
         
         return True
         
     except Exception as e:
         print(f"❌ Error cargando a PostgreSQL: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
-
-def procesar_archivo_paiweb_completo(ruta_archivo, hoja="Vacunas"):
+def procesar_vacunacion_completo(archivo_excel):
     """
-    Función principal: Procesa archivo PAIweb completo a PostgreSQL
+    Proceso completo: Excel PAIweb → Procesamiento → PostgreSQL
     """
-    
-    print("\n" + "=" * 80)
-    print(" PROCESAMIENTO PAIweb → POSTGRESQL (ANÓNIMO) ".center(80))
-    print("=" * 80)
+    print("💉 PROCESAMIENTO COMPLETO PAIweb → POSTGRESQL")
+    print("=" * 60)
     
     inicio = datetime.now()
     print(f"🚀 Iniciando: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("-" * 80)
-
+    
     try:
-        # 1. VERIFICAR ARCHIVO
-        if not os.path.exists(ruta_archivo):
-            print(f"❌ ERROR: Archivo no encontrado: {ruta_archivo}")
-            return None, False
-            
-        print(f"📂 Procesando: {ruta_archivo}")
+        # 1. Verificar archivo
+        if not os.path.exists(archivo_excel):
+            print(f"❌ ERROR: Archivo no encontrado: {archivo_excel}")
+            return False
         
-        # 2. LIMPIAR Y PROCESAR (ANÓNIMO)
-        df_limpio = limpiar_paiweb_fiebre_amarilla_anonimo(ruta_archivo, hoja)
+        print(f"📂 Archivo: {archivo_excel}")
+        tamaño_mb = os.path.getsize(archivo_excel) / (1024*1024)
+        print(f"📊 Tamaño: {tamaño_mb:.1f} MB")
         
-        if df_limpio is None or len(df_limpio) == 0:
-            print("❌ ERROR: No hay datos válidos para procesar")
-            return None, False
+        # 2. Procesar datos PAIweb
+        df_vacunacion = procesar_paiweb_vacunacion(archivo_excel)
         
-        # 3. CARGAR A POSTGRESQL
-        exito_carga = cargar_postgresql_optimizado(df_limpio)
+        if df_vacunacion is None:
+            print("❌ Error en procesamiento de vacunación")
+            return False
         
-        # 4. RESUMEN FINAL
+        # 3. Cargar a PostgreSQL
+        exito = cargar_vacunacion_postgresql(df_vacunacion)
+        
+        # 4. Resumen final
         duracion = datetime.now() - inicio
-        print(f"\n{'='*80}")
-        print(" PROCESAMIENTO COMPLETADO ".center(80))
-        print("=" * 80)
+        print(f"\n{'='*60}")
+        print(" PROCESAMIENTO VACUNACIÓN COMPLETADO ".center(60))
+        print("=" * 60)
         
-        if exito_carga:
-            print("🎉 ¡ÉXITO TOTAL!")
-            print(f"📊 {len(df_limpio):,} registros anónimos cargados")
+        if exito:
+            print("🎉 ¡VACUNACIÓN CARGADA EXITOSAMENTE!")
+            print(f"📊 {len(df_vacunacion):,} registros anónimos procesados")
             print("🔒 Cero datos personales almacenados")
-            print("⚡ Dashboard puede conectarse a PostgreSQL")
+            print("📈 Vistas de coberturas actualizadas")
+            print("⚡ Dashboard listo para conectarse")
         else:
-            print("⚠️ Procesamiento completado con errores en BD")
-            print("📁 Datos procesados disponibles en memoria")
+            print("⚠️ Procesamiento con errores en carga BD")
         
         print(f"⏱️ Tiempo total: {duracion.total_seconds():.1f} segundos")
         print(f"📅 Finalizado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        return df_limpio, exito_carga
-
+        return exito
+        
     except Exception as e:
-        print(f"❌ Error crítico: {str(e)}")
+        print(f"❌ Error crítico: {e}")
         import traceback
         traceback.print_exc()
-        return None, False
+        return False
 
-
-def verificar_calidad_datos():
+def verificar_calidad_vacunacion():
     """
-    Verifica calidad de datos cargados en PostgreSQL
+    Verifica la calidad de los datos de vacunación cargados
     """
-    print("\n🔍 VERIFICANDO CALIDAD DE DATOS...")
+    print("\n🔍 VERIFICANDO CALIDAD DATOS VACUNACIÓN")
+    print("=" * 45)
     
     try:
         engine = create_engine(DATABASE_URL)
@@ -479,27 +431,36 @@ def verificar_calidad_datos():
         with engine.connect() as conn:
             # Verificaciones básicas
             verificaciones = {
-                "total_registros": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla",
-                "registros_sin_municipio": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE codigo_municipio IS NULL",
-                "registros_sin_fecha": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE fecha_aplicacion IS NULL",
-                "edades_invalidas": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE edad_anos < 0 OR edad_anos > 90",
-                "municipios_unicos": "SELECT COUNT(DISTINCT codigo_municipio) FROM vacunacion_fiebre_amarilla",
-                "instituciones_unicas": "SELECT COUNT(DISTINCT institucion) FROM vacunacion_fiebre_amarilla"
+                "Total registros": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla",
+                "Sin código municipio": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE codigo_municipio IS NULL",
+                "Sin fecha aplicación": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE fecha_aplicacion IS NULL",
+                "Sin institución": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE institucion IS NULL",
+                "Edades inválidas": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE edad_anos < 0 OR edad_anos > 90",
+                "Sin grupo etario": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE grupo_etario IS NULL"
             }
             
-            print("📊 Resultados verificación:")
+            print("📊 Verificaciones de calidad:")
             for nombre, query in verificaciones.items():
-                resultado = conn.execute(text(query)).scalar()
-                print(f"   {nombre}: {resultado:,}")
+                try:
+                    resultado = conn.execute(text(query)).scalar()
+                    print(f"   {nombre}: {resultado:,}")
+                except Exception as e:
+                    print(f"   {nombre}: ERROR - {e}")
             
-            # Verificar vista de coberturas
-            try:
-                cobertura_sample = pd.read_sql(
-                    "SELECT * FROM v_coberturas_dashboard LIMIT 5", conn
-                )
-                print(f"✅ Vista coberturas funcional: {len(cobertura_sample)} registros muestra")
-            except Exception as e:
-                print(f"⚠️ Error en vista coberturas: {e}")
+            # Top instituciones
+            top_instituciones = pd.read_sql(text("""
+                SELECT institucion, COUNT(*) as vacunas
+                FROM vacunacion_fiebre_amarilla
+                WHERE institucion IS NOT NULL
+                GROUP BY institucion
+                ORDER BY vacunas DESC
+                LIMIT 5
+            """), conn)
+            
+            if len(top_instituciones) > 0:
+                print(f"\n🏥 Top 5 instituciones más activas:")
+                for _, row in top_instituciones.iterrows():
+                    print(f"   {row['institucion']}: {row['vacunas']:,} vacunas")
         
         return True
         
@@ -507,15 +468,14 @@ def verificar_calidad_datos():
         print(f"❌ Error verificación: {e}")
         return False
 
-
 # ================================
-# EJECUCIÓN DEL SCRIPT
+# FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🐍 SCRIPT PAIweb → PostgreSQL ANÓNIMO")
-    print("=" * 50)
+    print("💉 PROCESADOR VACUNACIÓN PAIweb → POSTGRESQL")
+    print("=" * 55)
     
-    # Configurar archivo por defecto
+    # Archivo por defecto
     archivo_default = "data/paiweb.xlsx"
     
     # Verificar archivo
@@ -524,18 +484,20 @@ if __name__ == "__main__":
         print("\n💡 Opciones:")
         print("1. Colocar archivo PAIweb en 'data/paiweb.xlsx'")
         print("2. Modificar variable archivo_default")
-        print("3. Llamar función: procesar_archivo_paiweb_completo('ruta/archivo.xlsx')")
+        print("3. Llamar: procesar_vacunacion_completo('ruta/archivo.xlsx')")
     else:
         # Ejecutar procesamiento completo
-        df_resultado, exito = procesar_archivo_paiweb_completo(archivo_default)
+        exito = procesar_vacunacion_completo(archivo_default)
         
         if exito:
-            print("\n🔧 Ejecutando verificación de calidad...")
-            verificar_calidad_datos()
+            print("\n🔧 Ejecutando verificaciones de calidad...")
+            verificar_calidad_vacunacion()
             
             print("\n🎯 PRÓXIMOS PASOS:")
-            print("1. Abrir DBeaver y conectar a PostgreSQL")
-            print("2. Explorar tabla 'vacunacion_fiebre_amarilla'")  
-            print("3. Revisar vistas: v_coberturas_dashboard, v_mapa_coberturas")
-            print("4. Conectar dashboard Streamlit a PostgreSQL")
-            print("5. ¡Disfrutar análisis optimizados! 🚀")
+            print("1. Revisar datos en DBeaver: tabla 'vacunacion_fiebre_amarilla'")
+            print("2. Consultar vistas: v_coberturas_dashboard, v_mapa_coberturas")
+            print("3. Calcular coberturas por municipio y grupo etario")
+            print("4. Conectar dashboard Streamlit")
+            print("5. ¡Análisis epidemiológicos listos! 🚀")
+        else:
+            print("\n❌ Procesamiento fallido. Revisar errores.")
