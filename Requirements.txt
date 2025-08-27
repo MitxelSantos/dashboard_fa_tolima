@@ -38,4 +38,4 @@ flake8==6.0.0           # Linting
 
 # Exportación de reportes
 jinja2==3.1.2           # Templates HTML
-fpdf==2.7.4             # PDFs
+fpdf2==2.7.9            # PDFs - versión corregida y actual
