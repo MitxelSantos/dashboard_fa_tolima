@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 test_conexion.py - Prueba Sistema Epidemiológico Tolima V2.0
-Versión actualizada con configuración centralizada
+CORREGIDO: Sin generación de datos de prueba, solo verificaciones reales
 """
 
 import pandas as pd
@@ -19,7 +19,8 @@ try:
     from config import (
         DATABASE_URL, FileConfig, DatabaseConfig,
         clasificar_grupo_etario, limpiar_fecha_robusta,
-        cargar_codigos_divipola_desde_gpkg, validar_configuracion
+        cargar_codigos_divipola_desde_gpkg, validar_configuracion,
+        verificar_actualizacion_archivos
     )
     print("✅ Configuración centralizada importada correctamente")
 except ImportError as e:
@@ -181,6 +182,17 @@ def test_configuracion_centralizada():
             print(f"   ⚠️ Archivo .gpkg no encontrado: {gpkg_path}")
             print("      💡 Colocar archivo tolima_cabeceras_veredas.gpkg en data/")
         
+        # 5. Probar sistema de alertas
+        print("\n🚨 Probando sistema de alertas...")
+        try:
+            alertas = verificar_actualizacion_archivos()
+            if alertas:
+                print(f"   ⚠️ {len(alertas)} alertas generadas")
+            else:
+                print("   ✅ Sistema de alertas funcionando (sin alertas)")
+        except Exception as e:
+            print(f"   ⚠️ Error en sistema de alertas: {e}")
+        
         print("✅ Configuración centralizada funcionando correctamente")
         return True
         
@@ -188,108 +200,68 @@ def test_configuracion_centralizada():
         print(f"❌ Error probando configuración: {e}")
         return False
 
-def test_sample_data_insert():
-    """Prueba insertar datos de muestra"""
-    print("\n🧪 PROBANDO INSERCIÓN DE DATOS DE MUESTRA...")
+def test_integridad_sistema():
+    """Verifica integridad general del sistema SIN generar datos de prueba"""
+    print("\n🔍 VERIFICANDO INTEGRIDAD DEL SISTEMA...")
+    print("(Solo verificaciones - sin generar datos de prueba)")
     
     try:
         engine = create_engine(DATABASE_URL)
         
-        # Verificar que las tablas existan
         with engine.connect() as conn:
-            tablas_sistema = ['unidades_territoriales', 'poblacion', 'vacunacion_fiebre_amarilla']
+            # 1. Verificar que PostgreSQL responde
+            conn.execute(text("SELECT 1"))
+            print("   ✅ PostgreSQL responde correctamente")
             
-            for tabla in tablas_sistema:
-                try:
-                    conn.execute(text(f"SELECT 1 FROM {tabla} LIMIT 1"))
-                    print(f"   ✅ Tabla {tabla}: disponible")
-                except:
-                    print(f"   ⚠️ Tabla {tabla}: no existe (crear con scripts SQL)")
-                    return False
-        
-        # Datos de muestra usando configuración
-        sample_territorio = pd.DataFrame([{
-            'tipo': 'municipio',
-            'codigo_divipola': '73001',
-            'codigo_dpto': '73',
-            'codigo_municipio': '73001',
-            'nombre': 'Ibagué',
-            'municipio': 'Ibagué',
-            'region': 'CENTRO',
-            'area_oficial_km2': 1498.0,
-            'activo': True
-        }])
-        
-        sample_poblacion = pd.DataFrame([{
-            'codigo_municipio': '73001',
-            'municipio': 'Ibagué', 
-            'tipo_ubicacion': 'Urbano',
-            'grupo_etario': '20-59 años',
-            'poblacion_total': 350000,
-            'año': 2024,
-            'fuente': 'SISBEN'
-        }])
-        
-        sample_vacunacion = pd.DataFrame([{
-            'codigo_municipio': '73001',
-            'municipio': 'Ibagué',
-            'tipo_ubicacion': 'Urbano', 
-            'institucion': 'Hospital San Rafael',
-            'fecha_aplicacion': '2024-01-15',
-            'grupo_etario': '20-59 años',
-            'edad_anos': 35,
-            'año': 2024,
-            'mes': 1,
-            'semana_epidemiologica': 3,
-            'fuente': 'PAIweb'
-        }])
-        
-        # Insertar muestras
-        try:
-            sample_territorio.to_sql('unidades_territoriales', engine, if_exists='append', index=False)
-            print("   ✅ Territorio de muestra insertado")
+            # 2. Verificar extensiones críticas
+            ext_postgis = conn.execute(text(
+                "SELECT 1 FROM pg_extension WHERE extname = 'postgis'"
+            )).fetchone()
             
-            sample_poblacion.to_sql('poblacion', engine, if_exists='append', index=False)
-            print("   ✅ Población de muestra insertada")
+            if ext_postgis:
+                print("   ✅ PostGIS disponible para datos geoespaciales")
+            else:
+                print("   ⚠️ PostGIS no encontrado")
             
-            sample_vacunacion.to_sql('vacunacion_fiebre_amarilla', engine, if_exists='append', index=False)
-            print("   ✅ Vacunación de muestra insertada")
-        except Exception as e:
-            print(f"   ⚠️ Error insertando datos: {e}")
-            return False
-        
-        # Verificar vista de coberturas si existe
-        with engine.connect() as conn:
+            # 3. Verificar capacidad de crear tablas temporales
             try:
-                cobertura_test = pd.read_sql(text("""
-                    SELECT municipio, vacunados, poblacion_total, cobertura_porcentaje
-                    FROM v_coberturas_dashboard 
-                    LIMIT 3
-                """), conn)
-                
-                if len(cobertura_test) > 0:
-                    print("\n📈 Muestra vista coberturas:")
-                    for _, row in cobertura_test.iterrows():
-                        print(f"   {row['municipio']}: {row['cobertura_porcentaje']:.1f}% "
-                              f"({row['vacunados']}/{row['poblacion_total']})")
-                else:
-                    print("   ⚠️ Vista coberturas sin datos")
+                conn.execute(text("""
+                    CREATE TEMP TABLE test_temp (
+                        id SERIAL PRIMARY KEY,
+                        nombre VARCHAR(50),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                conn.execute(text("DROP TABLE test_temp"))
+                print("   ✅ Capacidad de crear tablas verificada")
             except Exception as e:
-                print(f"   ⚠️ Vista coberturas no disponible: {e}")
+                print(f"   ⚠️ Error creando tablas temporales: {e}")
+            
+            # 4. Verificar zona horaria
+            timezone = conn.execute(text("SHOW timezone")).scalar()
+            print(f"   ℹ️ Zona horaria PostgreSQL: {timezone}")
+            
+            # 5. Verificar espacio disponible (si es posible)
+            try:
+                tamano_bd = conn.execute(text(
+                    f"SELECT pg_size_pretty(pg_database_size('{DatabaseConfig.DATABASE}'))"
+                )).scalar()
+                print(f"   📊 Tamaño base de datos: {tamano_bd}")
+            except Exception as e:
+                print(f"   ℹ️ No se pudo obtener tamaño BD: {e}")
         
-        print("\n🎉 ¡Sistema PostgreSQL V2.0 funcionando perfectamente!")
-        print("💡 Listo para usar scripts adaptados del sistema")
-        
+        print("✅ Integridad del sistema verificada")
         return True
         
     except Exception as e:
-        print(f"❌ Error en pruebas V2.0: {e}")
+        print(f"❌ Error verificación integridad: {e}")
         return False
 
 def main():
-    """Función principal de pruebas V2.0"""
+    """Función principal de pruebas V2.0 - SIN datos de prueba"""
     print("🧪 PRUEBA COMPLETA SISTEMA POSTGRESQL V2.0")
     print("=" * 55)
+    print("MODO: Solo verificaciones - sin generar datos de prueba")
     
     # Ejecutar validación completa de configuración
     print("⚙️ Ejecutando validación completa...")
@@ -305,15 +277,24 @@ def main():
     print(f"\n📋 Ejecutando {total_pruebas} pruebas principales...")
     
     # Prueba 1: Configuración centralizada
+    print("\n" + "="*50)
+    print("PRUEBA 1: CONFIGURACIÓN CENTRALIZADA")
+    print("="*50)
     if test_configuracion_centralizada():
         pruebas_exitosas += 1
     
     # Prueba 2: Conexión PostgreSQL
+    print("\n" + "="*50)
+    print("PRUEBA 2: CONEXIÓN POSTGRESQL")
+    print("="*50)
     if test_postgresql_connection():
         pruebas_exitosas += 1
         
-        # Prueba 3: Datos de muestra (solo si conexión OK)
-        if test_sample_data_insert():
+        # Prueba 3: Integridad (solo si conexión OK)
+        print("\n" + "="*50)
+        print("PRUEBA 3: INTEGRIDAD SISTEMA")
+        print("="*50)
+        if test_integridad_sistema():
             pruebas_exitosas += 1
     
     # Resumen final
@@ -340,6 +321,11 @@ def main():
     print("  Usuario: admin@tolima.gov.co")
     print("  Contraseña: admin123")
     print(f"\n• Conexión directa: {DATABASE_URL}")
+    
+    print(f"\n📞 IMPORTANTE:")
+    print("• Este test NO genera datos de prueba")
+    print("• Solo funciona con datos reales del sistema")
+    print("• Para generar data, usar scripts de carga específicos")
     
     return pruebas_exitosas == total_pruebas
 

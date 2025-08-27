@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 cargar_poblacion.py - Procesamiento Integrado Población SISBEN → PostgreSQL
-Integra la lógica completa de poblacion.py + carga directa a PostgreSQL
+Corregido: Solo código DIVIPOLA, duplicados por documento+tipo, mapeos locales
 """
 
 import pandas as pd
@@ -16,7 +16,7 @@ import sys
 
 # Importar configuración centralizada
 from config import (
-    DATABASE_URL, MAPEO_POBLACION_SISBEN,
+    DATABASE_URL,
     clasificar_grupo_etario, calcular_edad_en_meses, 
     determinar_ubicacion_urbano_rural, limpiar_fecha_robusta,
     buscar_codigo_municipio, normalizar_nombre_territorio
@@ -24,9 +24,24 @@ from config import (
 
 warnings.filterwarnings('ignore')
 
+# ================================
+# MAPEO LOCAL POBLACION SISBEN (Solo para este script)
+# ================================
+MAPEO_POBLACION_SISBEN = {
+    'codigo_municipio': 1,     # col_1 - Código DIVIPOLA municipio
+    'municipio': 2,            # col_2 - Nombre municipio  
+    'tipo_documento': 16,      # col_16 - Tipo documento (CC, TI, CE, etc.)
+    'corregimiento': 6,        # col_6
+    'vereda': 8,               # col_8
+    'barrio': 10,              # col_10
+    'documento': 17,           # col_17 - Número documento
+    'fecha_nacimiento': 18     # col_18
+}
+
 def cargar_poblacion_sisben_sin_headers(archivo_csv):
     """
     Carga CSV de población SISBEN sin headers
+    CORREGIDO: Solo código DIVIPOLA, duplicados por doc+tipo
     """
     print("👥 PROCESANDO POBLACIÓN SISBEN DESDE CSV SIN HEADERS")
     print("=" * 60)
@@ -44,7 +59,7 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
         # 2. ASIGNAR NOMBRES A COLUMNAS
         df.columns = [f"col_{i}" for i in range(df.shape[1])]
         
-        # Mapear columnas usando configuración centralizada
+        # Mapear columnas usando mapeo local específico
         columnas_mapeadas = {}
         for nombre_bd, indice in MAPEO_POBLACION_SISBEN.items():
             columna_excel = f"col_{indice}"
@@ -55,7 +70,7 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
         df = df.rename(columns=columnas_mapeadas)
         
         # Verificar que tenemos las columnas esenciales
-        columnas_esenciales = ['codigo_municipio', 'municipio', 'fecha_nacimiento', 'documento']
+        columnas_esenciales = ['codigo_municipio', 'fecha_nacimiento', 'documento', 'tipo_documento']
         columnas_faltantes = [col for col in columnas_esenciales if col not in df.columns]
         
         if columnas_faltantes:
@@ -83,10 +98,10 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
         
         print(f"   ✅ Registros con fechas válidas: {len(df_limpio):,}")
         
-        # 4. CALCULAR EDADES Y APLICAR FILTROS
-        print("🔢 Calculando edades...")
+        # 4. CALCULAR EDADES (SIEMPRE CON FECHA ACTUAL)
+        print("🔢 Calculando edades con fecha actual como referencia...")
         
-        fecha_referencia = fecha_actual.date()
+        fecha_referencia = fecha_actual.date()  # SIEMPRE fecha actual
         
         def calcular_edad_detallada(fecha_nac):
             if pd.isna(fecha_nac):
@@ -117,12 +132,17 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
         df_limpio['grupo_etario'] = df_limpio['edad_meses'].apply(clasificar_grupo_etario)
         df_limpio['fuera_grupos_etarios'] = df_limpio['grupo_etario'].isna()
         
-        # 6. NORMALIZAR MUNICIPIOS
-        print("🏙️ Normalizando municipios...")
+        # 6. PROCESAR CÓDIGOS DIVIPOLA ÚNICAMENTE
+        print("🗺️ Procesando códigos DIVIPOLA...")
         
-        df_limpio['municipio'] = df_limpio['municipio'].apply(
-            lambda x: normalizar_nombre_territorio(x).title() if pd.notna(x) else None
-        )
+        # Usar directamente código DIVIPOLA del archivo (ya viene en columna 1)
+        df_limpio['codigo_municipio'] = df_limpio['codigo_municipio'].astype(str).str.zfill(5)
+        
+        # Validar códigos DIVIPOLA válidos para Tolima (73xxx)
+        codigos_validos = df_limpio['codigo_municipio'].str.startswith('73')
+        df_limpio = df_limpio[codigos_validos]
+        
+        print(f"   ✅ Códigos DIVIPOLA Tolima válidos: {len(df_limpio):,}")
         
         # 7. DETERMINAR UBICACIÓN URBANO/RURAL
         print("📍 Determinando ubicación urbano/rural...")
@@ -133,18 +153,26 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
             ), axis=1
         )
         
-        # 8. ELIMINAR DUPLICADOS POR DOCUMENTO
-        print("🔍 Eliminando duplicados...")
+        # 8. ELIMINAR DUPLICADOS POR DOCUMENTO + TIPO DOCUMENTO
+        print("🔍 Eliminando duplicados por documento + tipo...")
         
         registros_inicial = len(df_limpio)
+        
+        # Crear clave única combinada
+        df_limpio['clave_documento'] = df_limpio['tipo_documento'].astype(str) + '_' + df_limpio['documento'].astype(str)
+        
+        # Remover duplicados manteniendo el más reciente por fecha nacimiento
         df_limpio = df_limpio.sort_values('fecha_nacimiento', ascending=False)
-        df_limpio = df_limpio.drop_duplicates(subset=['documento'], keep='first')
+        df_limpio = df_limpio.drop_duplicates(subset=['clave_documento'], keep='first')
         
         duplicados_removidos = registros_inicial - len(df_limpio)
         if duplicados_removidos > 0:
             print(f"   Duplicados eliminados: {duplicados_removidos:,}")
         
-        # 9. CREAR CONTEO POBLACIONAL AGREGADO
+        # Limpiar columna temporal
+        df_limpio = df_limpio.drop(columns=['clave_documento'])
+        
+        # 9. CREAR CONTEO POBLACIONAL AGREGADO (SOLO CÓDIGO DIVIPOLA)
         print("📊 Creando conteo poblacional agregado...")
         
         # Filtrar solo registros en grupos etarios definidos
@@ -160,12 +188,11 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
             print("❌ ERROR: No hay registros válidos para agregación")
             return None
         
-        # Agregar por municipio, ubicación y grupo etario
+        # AGREGACIÓN SOLO POR CÓDIGO DIVIPOLA (Opción A)
         conteo_poblacional = df_para_agregacion.groupby([
-            'codigo_municipio',
-            'municipio',
-            'tipo_ubicacion',
-            'grupo_etario'
+            'codigo_municipio',      # Solo código DIVIPOLA
+            'tipo_ubicacion',        # Urbano/Rural
+            'grupo_etario'           # Grupo etario calculado
         ]).size().reset_index(name='poblacion_total')
         
         # Ordenar resultados
@@ -193,6 +220,12 @@ def cargar_poblacion_sisben_sin_headers(archivo_csv):
         for grupo, poblacion in dist_grupos.items():
             porcentaje = (poblacion / conteo_poblacional['poblacion_total'].sum()) * 100
             print(f"   {grupo}: {poblacion:,} ({porcentaje:.1f}%)")
+        
+        # Distribución por municipios (top 10)
+        dist_municipios = conteo_poblacional.groupby('codigo_municipio')['poblacion_total'].sum().head(10)
+        print(f"\n🏆 TOP 10 MUNICIPIOS POR POBLACIÓN:")
+        for codigo, poblacion in dist_municipios.items():
+            print(f"   {codigo}: {poblacion:,}")
         
         print("✅ Procesamiento población completado exitosamente")
         
@@ -260,20 +293,20 @@ def cargar_poblacion_postgresql(df_poblacion, tabla="poblacion"):
                 porcentaje = (row['poblacion'] / poblacion_total) * 100
                 print(f"   {row['tipo_ubicacion']}: {row['poblacion']:,} hab ({porcentaje:.1f}%)")
             
-            # Top municipios más poblados
+            # Top municipios más poblados (por código DIVIPOLA)
             top_municipios = pd.read_sql(text(f"""
-                SELECT municipio, SUM(poblacion_total) as poblacion
+                SELECT codigo_municipio, SUM(poblacion_total) as poblacion
                 FROM {tabla} 
-                GROUP BY municipio 
+                GROUP BY codigo_municipio 
                 ORDER BY poblacion DESC 
                 LIMIT 10
             """), conn)
             
-            print(f"\n🏆 TOP 10 MUNICIPIOS MÁS POBLADOS:")
+            print(f"\n🏆 TOP 10 MUNICIPIOS MÁS POBLADOS (por código):")
             for i, row in top_municipios.iterrows():
-                print(f"   {i+1:2d}. {row['municipio']}: {row['poblacion']:,} hab")
+                print(f"   {i+1:2d}. {row['codigo_municipio']}: {row['poblacion']:,} hab")
             
-            # Verificar integridad referencial
+            # Verificar integridad referencial con unidades territoriales
             try:
                 sin_referencia = conn.execute(text(f"""
                     SELECT COUNT(*) 
@@ -339,6 +372,8 @@ def procesar_poblacion_completo(archivo_csv):
             print(f"📊 {len(df_poblacion):,} registros agregados procesados")
             print(f"👥 {df_poblacion['poblacion_total'].sum():,} habitantes totales")
             print("⚡ Denominadores listos para cálculo de coberturas")
+            print("🗺️ Solo códigos DIVIPOLA (Opción A)")
+            print("🔍 Duplicados eliminados por documento+tipo")
         else:
             print("⚠️ Procesamiento con errores en carga BD")
         
@@ -392,12 +427,12 @@ def verificar_calidad_poblacion():
             
             # Verificar completitud por municipio
             completitud = pd.read_sql(text("""
-                SELECT municipio,
+                SELECT codigo_municipio,
                        COUNT(DISTINCT tipo_ubicacion) as ubicaciones,
                        COUNT(DISTINCT grupo_etario) as grupos,
                        SUM(poblacion_total) as poblacion
                 FROM poblacion
-                GROUP BY municipio
+                GROUP BY codigo_municipio
                 HAVING COUNT(DISTINCT tipo_ubicacion) < 2 
                    OR COUNT(DISTINCT grupo_etario) < 3
                 ORDER BY poblacion DESC
@@ -407,7 +442,7 @@ def verificar_calidad_poblacion():
             if len(completitud) > 0:
                 print(f"\n⚠️ Municipios con posible datos incompletos:")
                 for _, row in completitud.iterrows():
-                    print(f"   {row['municipio']}: {row['ubicaciones']} ubicaciones, "
+                    print(f"   {row['codigo_municipio']}: {row['ubicaciones']} ubicaciones, "
                           f"{row['grupos']} grupos ({row['poblacion']:,} hab)")
             else:
                 print("✅ Todos los municipios tienen datos completos")
@@ -422,7 +457,7 @@ def verificar_calidad_poblacion():
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("👥 PROCESADOR POBLACIÓN SISBEN → POSTGRESQL")
+    print("👥 PROCESADOR POBLACIÓN SISBEN → POSTGRESQL V2.0")
     print("=" * 50)
     
     # Archivo por defecto (CSV sin headers)

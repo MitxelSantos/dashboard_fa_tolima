@@ -3,6 +3,7 @@
 """
 cargar_casos.py - Casos Fiebre Amarilla → PostgreSQL
 Procesamiento completo de casos con mapeo veredal desde .gpkg
+CORREGIDO: Municipio procedencia (nmun_proce), edad con fecha actual, mapeos locales
 """
 
 import pandas as pd
@@ -15,7 +16,7 @@ import os
 
 # Importar configuración centralizada
 from config import (
-    DATABASE_URL, MAPEO_CASOS_EXCEL,
+    DATABASE_URL,
     clasificar_grupo_etario, calcular_edad_en_meses,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,
     buscar_codigo_vereda, normalizar_nombre_territorio
@@ -23,9 +24,93 @@ from config import (
 
 warnings.filterwarnings('ignore')
 
+# ================================
+# MAPEO LOCAL CASOS EXCEL (Solo para este script)
+# ================================
+MAPEO_CASOS_EXCEL = {
+    'fecha_notificacion': 'fec_not',
+    'semana_epidemiologica': 'semana',
+    'codigo_prestador': 'cod_pre',
+    'primer_nombre': 'pri_nom_',
+    'segundo_nombre': 'seg_nom_',
+    'primer_apellido': 'pri_ape_',
+    'segundo_apellido': 'seg_ape_',
+    'tipo_documento': 'tip_ide_',
+    'numero_documento': 'num_ide_',
+    'edad': 'edad_',
+    'sexo': 'sexo_',
+    'area_residencia': 'area_',
+    'vereda_infeccion': 'vereda_',  # CORREGIDO: vereda donde se infectó
+    'ocupacion': 'ocupacion_',
+    'tipo_seguridad_social': 'tip_ss_',
+    'codigo_aseguradora': 'cod_ase_',
+    'pertenencia_etnica': 'per_etn_',
+    'estrato': 'estrato_',
+    'grupo_discapacidad': 'gp_discapacidad',
+    'grupo_desplazado': 'gp_desplazado',
+    'grupo_migrante': 'gp_migrante',
+    'grupo_carcelario': 'gp_carcela',
+    'grupo_gestante': 'gp_gestante',
+    'semanas_gestacion': 'sem_ges_',
+    'grupo_indigena': 'gp_indigena',
+    'poblacion_icbf': 'gp_pobicbf',
+    'madres_comunitarias': 'gp_mad_com',
+    'grupo_desmovilizados': 'gp_desmovim',
+    'grupo_psiquiatricos': 'gp_psiquiatr',
+    'victimas_violencia': 'gp_vic_viol',
+    'grupo_otros': 'gp_otros',
+    'fuente_informacion': 'fuente_',
+    'fecha_consulta': 'fec_con_',
+    'inicio_sintomas': 'ini_sin_',
+    'tipo_caso': 'tip_cas_',
+    'paciente_hospitalizado': 'pac_hos_',
+    'fecha_hospitalizacion': 'fec_hos_',
+    'condicion_final': 'con_fin_',
+    'fecha_defuncion': 'fec_def_',
+    'telefono': 'telefono_',
+    'fecha_nacimiento': 'fecha_nto_',
+    'certificado_defuncion': 'cer_def_',
+    'carnet_vacunacion': 'carne_vacu',
+    'fecha_vacunacion': 'fec_fa1_',
+    'fiebre': 'fiebre',
+    'mialgias': 'malgias',
+    'artralgias': 'artralgias_',
+    'cefalea': 'cefalea',
+    'vomitos': 'vomito',
+    'ictericia': 'ictericia',
+    'sangrado': 'sfaget',
+    'oliguria': 'oliguria',
+    'shock': 'shock',
+    'bradicardia': 'bradicardi',
+    'falla_renal': 'falla_renal',
+    'falla_hepatica': 'falla_hepa',
+    'hepatomegalia': 'hepatomega',
+    'hemoptisis': 'hemoptisis',
+    'hiperemia': 'hipiremia',
+    'hematemesis': 'hematemesi',
+    'petequias': 'petequias',
+    'metrorragia': 'metrorragi',
+    'melenas': 'melenas',
+    'equimosis': 'equimosis',
+    'epistaxis': 'epistaxis',
+    'hematuria': 'hematuria',
+    'caso_familiar': 'cas_fam',
+    'codigo_municipio_infeccion': 'codmuninfe',
+    'nombre_upgd': 'nom_upgd',
+    'pais_procedencia': 'npais_procen',
+    'departamento_procedencia': 'ndep_proce',
+    'municipio_procedencia': 'nmun_proce',  # CORREGIDO: municipio donde se infectó
+    'pais_residencia': 'npais_resi',
+    'departamento_residencia': 'ndep_resi',
+    'municipio_residencia': 'nmun_resi',
+    'departamento_notificacion': 'ndep_notif',
+    'municipio_notificacion': 'nmun_notif'
+}
+
 def procesar_casos_fiebre_amarilla(archivo_excel):
     """
     Procesa casos de fiebre amarilla desde Excel con mapeo completo
+    CORREGIDO: Municipio procedencia, edad con fecha actual
     """
     print("🦠 PROCESANDO CASOS FIEBRE AMARILLA")
     print("=" * 40)
@@ -43,13 +128,13 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
         print(f"📊 Registros iniciales: {len(df):,}")
         print(f"📋 Columnas originales: {len(df.columns)}")
         
-        # 2. MAPEAR TODAS LAS COLUMNAS DISPONIBLES
+        # 2. MAPEAR TODAS LAS COLUMNAS DISPONIBLES (mapeo local)
         print("🔄 Mapeando columnas disponibles...")
         
         columnas_mapeadas = {}
         columnas_no_encontradas = []
         
-        # Usar mapeo corregido desde config
+        # Usar mapeo local específico para casos
         for nombre_bd, nombre_excel in MAPEO_CASOS_EXCEL.items():
             if nombre_excel in df.columns:
                 columnas_mapeadas[nombre_excel] = nombre_bd
@@ -96,37 +181,27 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
             if campo_fecha in df.columns:
                 df[campo_fecha] = df[campo_fecha].apply(limpiar_fecha_robusta)
         
-        # 4. CALCULAR EDAD DESDE FECHA DE NACIMIENTO
-        print("👤 Calculando edad desde fecha nacimiento...")
+        # 4. CALCULAR EDAD CON FECHA ACTUAL (CORREGIDO)
+        print("👤 Calculando edad con fecha ACTUAL como referencia...")
         
         if 'fecha_nacimiento' in df.columns:
-            fecha_referencia = date.today()
+            fecha_referencia = date.today()  # CORREGIDO: Siempre fecha actual
             
-            def calcular_edad_caso(fecha_nac, fecha_inicio_sint=None):
-                """Calcula edad usando fecha nacimiento, preferiblemente a fecha inicio síntomas"""
+            def calcular_edad_caso_actual(fecha_nac):
+                """Calcula edad usando SOLO fecha actual como referencia"""
                 if pd.isna(fecha_nac):
                     return None, None
                 
-                # Usar fecha inicio síntomas si está disponible, sino fecha actual
-                fecha_ref = fecha_inicio_sint if pd.notna(fecha_inicio_sint) else fecha_referencia
-                
-                if isinstance(fecha_ref, pd.Timestamp):
-                    fecha_ref = fecha_ref.date()
-                
-                edad_meses = calcular_edad_en_meses(fecha_nac, fecha_ref)
+                # SIEMPRE usar fecha actual, NO fecha inicio síntomas
+                edad_meses = calcular_edad_en_meses(fecha_nac, fecha_referencia)
                 if edad_meses is not None:
                     edad_anos = edad_meses / 12
                     return edad_anos, edad_meses
                 
                 return None, None
             
-            # Calcular edad considerando fecha inicio síntomas
-            edades_data = df.apply(
-                lambda row: calcular_edad_caso(
-                    row.get('fecha_nacimiento'),
-                    row.get('inicio_sintomas')
-                ), axis=1
-            )
+            # Calcular edad con fecha actual únicamente
+            edades_data = df['fecha_nacimiento'].apply(calcular_edad_caso_actual)
             
             df['edad_calculada_anos'] = [x[0] if x else None for x in edades_data]
             df['edad_calculada_meses'] = [x[1] if x else None for x in edades_data]
@@ -134,7 +209,8 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
             # Usar edad calculada o edad del archivo
             df['edad_final'] = df['edad_calculada_anos'].fillna(df.get('edad', np.nan))
             
-            print(f"   ✅ Edad calculada desde fecha nacimiento")
+            print(f"   ✅ Edad calculada con FECHA ACTUAL como referencia")
+            print(f"   📅 Fecha referencia: {fecha_referencia}")
         else:
             # Si no hay fecha nacimiento, usar edad directa del archivo
             df['edad_final'] = df.get('edad', np.nan)
@@ -152,41 +228,44 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
         for grupo, cantidad in grupos_dist.head().items():
             print(f"     {grupo}: {cantidad:,}")
         
-        # 6. MAPEAR CÓDIGO DIVIPOLA VEREDAL
-        print("🗺️ Mapeando códigos DIVIPOLA veredales...")
+        # 6. MAPEAR CÓDIGO DIVIPOLA VEREDAL CON MUNICIPIO PROCEDENCIA
+        print("🗺️ Mapeando códigos DIVIPOLA veredales con municipio procedencia...")
         
         if 'vereda_infeccion' in df.columns:
-            # Usar municipio como contexto si está disponible
-            municipio_contexto = df.get('municipio_residencia') or df.get('municipio_notificacion')
+            # CORREGIDO: Usar municipio_procedencia como contexto (donde se infectó)
+            municipio_contexto = df.get('municipio_procedencia')
             
-            def buscar_codigo_vereda_caso(vereda, municipio_ctx=None):
-                """Busca código veredal usando contexto municipal"""
+            def buscar_codigo_vereda_caso(vereda, municipio_proc):
+                """Busca código veredal usando municipio procedencia como contexto"""
                 if pd.isna(vereda):
                     return None
-                return buscar_codigo_vereda(vereda, municipio_ctx)
+                return buscar_codigo_vereda(vereda, municipio_proc)
             
-            # Aplicar búsqueda veredal con contexto
+            # Aplicar búsqueda veredal con contexto de municipio procedencia
             if municipio_contexto is not None:
                 df['codigo_divipola_vereda'] = df.apply(
                     lambda row: buscar_codigo_vereda_caso(
                         row.get('vereda_infeccion'),
-                        row.get('municipio_residencia') or row.get('municipio_notificacion')
+                        row.get('municipio_procedencia')  # CORREGIDO: usar procedencia
                     ), axis=1
                 )
             else:
                 df['codigo_divipola_vereda'] = df['vereda_infeccion'].apply(
-                    lambda x: buscar_codigo_vereda_caso(x)
+                    lambda x: buscar_codigo_vereda_caso(x, None)
                 )
             
             codigos_veredales_asignados = df['codigo_divipola_vereda'].notna().sum()
             print(f"   ✅ Códigos veredales asignados: {codigos_veredales_asignados:,}")
+            print(f"   🗺️ Contexto: municipio procedencia (donde se infectó)")
         
         # 7. NORMALIZAR CAMPOS CATEGÓRICOS
         print("🔧 Normalizando campos categóricos...")
         
-        # Normalizar nombres de municipios
+        # Normalizar nombres de municipios (procedencia, residencia, notificación)
         campos_municipio = [
-            'municipio_residencia', 'municipio_procedencia', 'municipio_notificacion'
+            'municipio_procedencia',     # DONDE SE INFECTÓ (PRINCIPAL)
+            'municipio_residencia',      # Donde vive
+            'municipio_notificacion'     # Donde se notificó
         ]
         
         for campo in campos_municipio:
@@ -281,9 +360,16 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
         print(f"\n📊 ESTADÍSTICAS CASOS PROCESADOS:")
         print(f"   Total casos: {len(df):,}")
         
-        if 'municipio_residencia' in df.columns:
-            municipios_casos = df['municipio_residencia'].nunique()
-            print(f"   Municipios con casos: {municipios_casos}")
+        # CORREGIDO: Usar municipio_procedencia (donde se infectó)
+        if 'municipio_procedencia' in df.columns:
+            municipios_casos = df['municipio_procedencia'].nunique()
+            print(f"   Municipios con casos (procedencia/infección): {municipios_casos}")
+            
+            # Top municipios con más casos (por procedencia)
+            top_municipios = df['municipio_procedencia'].value_counts().head(5)
+            print(f"   Top municipios procedencia (infección):")
+            for municipio, casos in top_municipios.items():
+                print(f"     {municipio}: {casos:,} casos")
         
         if 'año' in df.columns:
             años_casos = sorted(df['año'].dropna().unique())
@@ -301,14 +387,9 @@ def procesar_casos_fiebre_amarilla(archivo_excel):
             for estado, cantidad in vacunacion.items():
                 print(f"     {estado}: {cantidad:,}")
         
-        # Top municipios con más casos
-        if 'municipio_residencia' in df.columns:
-            top_municipios = df['municipio_residencia'].value_counts().head(5)
-            print(f"   Top municipios con casos:")
-            for municipio, casos in top_municipios.items():
-                print(f"     {municipio}: {casos:,} casos")
-        
         print("✅ Procesamiento casos completado")
+        print("📅 Edad calculada con fecha actual (CORREGIDO)")
+        print("🗺️ Mapeo veredal con municipio procedencia (CORREGIDO)")
         
         return df
         
@@ -358,7 +439,7 @@ def cargar_casos_postgresql(df_casos, tabla="casos_fiebre_amarilla"):
             # Estadísticas post-carga
             stats = pd.read_sql(text(f"""
                 SELECT 
-                    COUNT(DISTINCT municipio_residencia) as municipios_residencia,
+                    COUNT(DISTINCT municipio_procedencia) as municipios_procedencia,
                     COUNT(DISTINCT año) as años_casos,
                     COUNT(CASE WHEN condicion_final_texto = 'Muerto' THEN 1 END) as defunciones,
                     MIN(fecha_notificacion) as fecha_min,
@@ -369,7 +450,7 @@ def cargar_casos_postgresql(df_casos, tabla="casos_fiebre_amarilla"):
             
             if len(stats) > 0:
                 s = stats.iloc[0]
-                print(f"📍 Municipios residencia: {s['municipios_residencia']}")
+                print(f"📍 Municipios procedencia: {s['municipios_procedencia']}")
                 print(f"📊 Años con casos: {s['años_casos']}")
                 print(f"☠️ Defunciones: {s['defunciones']}")
                 if s['fecha_min'] and s['fecha_max']:
@@ -394,7 +475,7 @@ def procesar_casos_completo(archivo_excel):
     """
     Proceso completo: Excel → Procesamiento → PostgreSQL
     """
-    print("🦠 PROCESAMIENTO COMPLETO CASOS FIEBRE AMARILLA")
+    print("🦠 PROCESAMIENTO COMPLETO CASOS FIEBRE AMARILLA V2.0")
     print("=" * 55)
     
     inicio = datetime.now()
@@ -429,7 +510,8 @@ def procesar_casos_completo(archivo_excel):
         if exito:
             print("🎉 ¡CASOS CARGADOS EXITOSAMENTE!")
             print(f"📊 {len(df_casos):,} casos procesados")
-            print("🗺️ Códigos veredales asignados cuando disponible")
+            print("📅 Edad calculada con fecha actual (CORREGIDO)")
+            print("🗺️ Mapeo veredal con municipio procedencia (CORREGIDO)")
             print("🤒 Síntomas y datos epidemiológicos completos")
             print("📈 Listos para análisis de vigilancia")
         else:
@@ -469,7 +551,7 @@ def generar_reporte_casos():
             resumen = pd.read_sql(text("""
                 SELECT 
                     COUNT(*) as total_casos,
-                    COUNT(DISTINCT municipio_residencia) as municipios_afectados,
+                    COUNT(DISTINCT municipio_procedencia) as municipios_afectados,
                     COUNT(CASE WHEN condicion_final_texto = 'Muerto' THEN 1 END) as defunciones,
                     COUNT(CASE WHEN vacunado_previo = 'Sí' THEN 1 END) as vacunados_previos,
                     MIN(fecha_notificacion) as primer_caso,
@@ -482,26 +564,26 @@ def generar_reporte_casos():
                 r = resumen.iloc[0]
                 print(f"📋 RESUMEN EPIDEMIOLÓGICO:")
                 print(f"   Total casos: {r['total_casos']:,}")
-                print(f"   Municipios afectados: {r['municipios_afectados']}")
+                print(f"   Municipios procedencia: {r['municipios_afectados']}")
                 print(f"   Defunciones: {r['defunciones']} (Letalidad: {(r['defunciones']/r['total_casos']*100):.1f}%)")
                 print(f"   Vacunados previos: {r['vacunados_previos']}")
                 if r['primer_caso'] and r['ultimo_caso']:
                     print(f"   Período: {r['primer_caso']} a {r['ultimo_caso']}")
             
-            # Casos por municipio
+            # Casos por municipio procedencia
             casos_municipio = pd.read_sql(text("""
-                SELECT municipio_residencia, COUNT(*) as casos
+                SELECT municipio_procedencia, COUNT(*) as casos
                 FROM casos_fiebre_amarilla
-                WHERE municipio_residencia IS NOT NULL
-                GROUP BY municipio_residencia
+                WHERE municipio_procedencia IS NOT NULL
+                GROUP BY municipio_procedencia
                 ORDER BY casos DESC
                 LIMIT 10
             """), conn)
             
             if len(casos_municipio) > 0:
-                print(f"\n🏆 TOP 10 MUNICIPIOS MÁS AFECTADOS:")
+                print(f"\n🏆 TOP 10 MUNICIPIOS PROCEDENCIA (INFECCIÓN):")
                 for _, row in casos_municipio.iterrows():
-                    print(f"   {row['municipio_residencia']}: {row['casos']} casos")
+                    print(f"   {row['municipio_procedencia']}: {row['casos']} casos")
             
             # Casos por grupo etario
             casos_edad = pd.read_sql(text("""
@@ -527,7 +609,7 @@ def generar_reporte_casos():
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🦠 PROCESADOR CASOS FIEBRE AMARILLA")
+    print("🦠 PROCESADOR CASOS FIEBRE AMARILLA V2.0")
     print("=" * 40)
     
     # Archivo por defecto

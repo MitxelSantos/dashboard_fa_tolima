@@ -3,6 +3,7 @@
 """
 cargar_vacunacion.py - PAIweb → PostgreSQL
 Procesamiento de datos de vacunación
+CORREGIDO: Edad calculada con fecha actual, mapeos locales
 Solo columnas necesarias, datos completamente anónimos
 """
 
@@ -16,19 +17,30 @@ from sqlalchemy import create_engine, text
 
 # Importar configuración centralizada
 from config import (
-    DATABASE_URL, MAPEO_VACUNACION_EXCEL,
+    DATABASE_URL, MAPEO_MUNICIPIOS_ESPECIALES,
     clasificar_grupo_etario, calcular_edad_en_meses,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,
-    buscar_codigo_municipio, normalizar_nombre_territorio,
-    MAPEO_MUNICIPIOS_ESPECIALES
+    buscar_codigo_municipio, normalizar_nombre_territorio
 )
 
 warnings.filterwarnings("ignore")
 
+# ================================
+# MAPEO LOCAL VACUNACIÓN PAIweb (Solo para este script)
+# ================================
+MAPEO_VACUNACION_EXCEL = {
+    'departamento': 'Departamento',
+    'municipio': 'Municipio',
+    'institucion': 'Institucion',
+    'fecha_aplicacion': 'fechaaplicacion',
+    'fecha_nacimiento': 'FechaNacimiento',
+    'tipo_ubicacion': 'TipoUbicación'
+}
+
 def procesar_paiweb_vacunacion(archivo_excel):
     """
     Procesa datos de vacunación PAIweb ELIMINANDO datos personales
-    Usa FechaNacimiento para cálculo de edad
+    CORREGIDO: Edad calculada con fecha actual (no fecha aplicación)
     """
     print("💉 PROCESANDO VACUNACIÓN PAIweb → POSTGRESQL")
     print("=" * 55)
@@ -46,10 +58,10 @@ def procesar_paiweb_vacunacion(archivo_excel):
         print(f"📊 Registros iniciales: {len(df):,}")
         print(f"📋 Columnas disponibles: {len(df.columns)}")
         
-        # 2. MAPEAR SOLO COLUMNAS NECESARIAS
+        # 2. MAPEAR SOLO COLUMNAS NECESARIAS (mapeo local)
         print("🔄 Mapeando columnas necesarias...")
         
-        # Verificar y mapear columnas usando configuración centralizada
+        # Verificar y mapear columnas usando mapeo local específico
         columnas_mapeadas = {}
         columnas_faltantes = []
         
@@ -93,42 +105,32 @@ def procesar_paiweb_vacunacion(archivo_excel):
             print("❌ ERROR CRÍTICO: No se encontró columna FechaNacimiento")
             return None
         
-        # 4. CALCULAR EDAD USANDO FECHA DE NACIMIENTO
-        print("🔢 Calculando edad desde fecha de nacimiento...")
+        # 4. CALCULAR EDAD USANDO FECHA ACTUAL (CORREGIDO)
+        print("🔢 Calculando edad con fecha ACTUAL como referencia...")
         
-        fecha_referencia = date.today()
+        fecha_referencia = date.today()  # CORREGIDO: Siempre fecha actual
         
-        def calcular_edad_completa(fecha_nac, fecha_app):
-            """Calcula edad usando fecha nacimiento y fecha aplicación"""
+        def calcular_edad_con_fecha_actual(fecha_nac):
+            """Calcula edad usando SOLO fecha actual como referencia"""
             if pd.isna(fecha_nac):
                 return None, None
             
-            # Usar fecha aplicación si está disponible, sino fecha actual
-            fecha_ref = fecha_app if pd.notna(fecha_app) else fecha_referencia
-            
-            if isinstance(fecha_ref, pd.Timestamp):
-                fecha_ref = fecha_ref.date()
-            
-            # Calcular meses totales y años
-            edad_meses = calcular_edad_en_meses(fecha_nac, fecha_ref)
+            # SIEMPRE usar fecha actual, NO fecha aplicación
+            edad_meses = calcular_edad_en_meses(fecha_nac, fecha_referencia)
             if edad_meses is not None:
                 edad_anos = edad_meses / 12
                 return edad_meses, edad_anos
             
             return None, None
         
-        # Aplicar cálculo de edad
-        edades_data = df.apply(
-            lambda row: calcular_edad_completa(
-                row.get('fecha_nacimiento'), 
-                row.get('fecha_aplicacion')
-            ), axis=1
-        )
+        # Aplicar cálculo de edad con fecha actual
+        edades_data = df['fecha_nacimiento'].apply(calcular_edad_con_fecha_actual)
         
         df['edad_meses'] = [x[0] if x else None for x in edades_data]
         df['edad_anos'] = [x[1] if x else None for x in edades_data]
         
-        print(f"   ✅ Edades calculadas usando fecha nacimiento")
+        print(f"   ✅ Edades calculadas usando FECHA ACTUAL como referencia")
+        print(f"   📅 Fecha referencia: {fecha_referencia}")
         
         # 5. CLASIFICAR GRUPOS ETARIOS
         print("👥 Clasificando grupos etarios...")
@@ -251,13 +253,14 @@ def procesar_paiweb_vacunacion(archivo_excel):
         
         if 'edad_anos' in df.columns:
             edad_stats = df['edad_anos'].describe()
-            print(f"   Estadísticas edad:")
+            print(f"   Estadísticas edad (calculada con fecha actual):")
             print(f"     Mínima: {edad_stats['min']:.1f} años")
             print(f"     Máxima: {edad_stats['max']:.1f} años")
             print(f"     Promedio: {edad_stats['mean']:.1f} años")
         
         print("✅ Procesamiento PAIweb completado")
         print("🔒 CERO datos personales mantenidos")
+        print("📅 Edad calculada con fecha actual (CORREGIDO)")
         
         return df
         
@@ -366,7 +369,7 @@ def procesar_vacunacion_completo(archivo_excel):
     """
     Proceso completo: Excel PAIweb → Procesamiento → PostgreSQL
     """
-    print("💉 PROCESAMIENTO COMPLETO PAIweb → POSTGRESQL")
+    print("💉 PROCESAMIENTO COMPLETO PAIweb → POSTGRESQL V2.0")
     print("=" * 60)
     
     inicio = datetime.now()
@@ -402,6 +405,7 @@ def procesar_vacunacion_completo(archivo_excel):
             print("🎉 ¡VACUNACIÓN CARGADA EXITOSAMENTE!")
             print(f"📊 {len(df_vacunacion):,} registros anónimos procesados")
             print("🔒 Cero datos personales almacenados")
+            print("📅 Edad calculada con fecha actual (CORREGIDO)")
             print("📈 Vistas de coberturas actualizadas")
             print("⚡ Dashboard listo para conectarse")
         else:
@@ -472,7 +476,7 @@ def verificar_calidad_vacunacion():
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("💉 PROCESADOR VACUNACIÓN PAIweb → POSTGRESQL")
+    print("💉 PROCESADOR VACUNACIÓN PAIweb → POSTGRESQL V2.0")
     print("=" * 55)
     
     # Archivo por defecto

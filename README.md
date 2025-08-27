@@ -1,394 +1,432 @@
-# 🏥 Sistema Epidemiológico Tolima - V2.0
+# 🏥 Sistema Epidemiológico Tolima - V2.0 CORREGIDO
 
 Sistema de vigilancia epidemiológica para fiebre amarilla en el departamento del Tolima con **configuración centralizada** y **mapeo automático de códigos DIVIPOLA** desde archivos geoespaciales.
 
-## 🚀 Novedades V2.0
+## 🔧 Correcciones Principales V2.0
 
-- ✅ **Configuración centralizada** en `config.py` para todos los scripts
-- ✅ **Mapeo automático de códigos DIVIPOLA** desde archivo `.gpkg`
-- ✅ **Búsqueda inteligente de veredas** con contexto municipal
-- ✅ **Scripts integrados** con procesamiento completo
-- ✅ **Validación robusta de fechas** en múltiples formatos
-- ✅ **Carga de primera hoja automática** (sin especificar nombres)
-- ✅ **Anonimización completa** de datos personales
-- ✅ **Sistema coordinador inteligente** para actualizaciones masivas
+### ✅ **Configuración Centralizada Optimizada**
+- ❌ **Removido:** Mapeos específicos de columnas Excel de `config.py`
+- ✅ **Mantenido:** Solo elementos globales (grupos etarios, códigos DIVIPOLA, funciones compartidas)
+- ✅ **Cada script:** Tiene sus propios mapeos de columnas específicos
 
-## 📁 Estructura del Proyecto
+### ✅ **Cálculo de Edad Corregido**
+- ❌ **Antes:** Edad calculada entre fecha nacimiento y fecha aplicación/síntomas
+- ✅ **Ahora:** Edad SIEMPRE calculada entre fecha nacimiento y **fecha actual**
+- 📅 **Aplicado en:** `cargar_vacunacion.py` y `cargar_casos.py`
+
+### ✅ **Población SISBEN Mejorada**
+- ✅ **Solo código DIVIPOLA:** Opción A implementada (más confiable)
+- ✅ **Duplicados mejorados:** Considerando `tipo_documento` + `numero_documento`
+- ✅ **Mapeos locales:** Específicos en el script, no en config global
+
+### ✅ **Casos Fiebre Amarilla Corregidos**
+- ✅ **Municipio procedencia:** Campo `nmun_proce` (donde se infectó) para mapeo veredal
+- ✅ **Contexto veredal:** Vereda `vereda_` con contexto municipio procedencia
+- ✅ **Edad actual:** Calculada con fecha de hoy, no fecha síntomas
+
+### ✅ **Epizootias Optimizadas**
+- ✅ **Contexto municipal:** Búsqueda veredal con municipio como contexto
+- ✅ **Sin campos calculados:** Datos originales preservados
+- ✅ **Mapeos locales:** Específicos del script
+
+### ✅ **Sistema de Alertas Enfocado**
+- ✅ **Solo actualización archivos:** No coberturas ni datos internos
+- ✅ **Alertas diarias:** Archivos desactualizados por tipo de criticidad
+- ✅ **Automatización:** Sistema programable con `schedule`
+
+### ✅ **Setup Sistema Inteligente**
+- ✅ **Verificador/Instalador:** Solo instala lo que falta
+- ✅ **Verificación estructura:** Directorios, .env, Docker, dependencias
+- ✅ **Modo inteligente:** Detecta y corrige solo lo necesario
+
+### ✅ **Test Conexión Sin Datos Prueba**
+- ❌ **Removido:** Generación de datos de prueba
+- ✅ **Solo verificaciones:** Funciona únicamente con datos reales
+- ✅ **Verificaciones robustas:** PostgreSQL, extensiones, tablas, vistas
+
+### ✅ **Dependencias Actualizadas**
+- ✅ **fpdf2==2.7.9:** Versión corregida y estable
+- ✅ **Sin fpdf 2.7.4:** Versión inexistente corregida
+
+## 📁 Estructura Corregida del Proyecto
 
 ```
 📁 epidemiologia_tolima/
 ├── 🐳 docker-compose.yml              # PostgreSQL + PostGIS
-├── 📋 requirements.txt                # Dependencias Python
-├── ⚙️ config.py                      # 🆕 CONFIGURACIÓN CENTRALIZADA
-├── 🧪 test_conexion.py               # Pruebas de conexión
+├── 📋 requirements.txt                # Dependencias corregidas
+├── ⚙️ config.py                      # 🆕 SOLO elementos globales
+├── 🧪 test_conexion.py               # 🆕 Sin datos de prueba
+├── 🔧 setup_sistema.py               # 🆕 Verificador inteligente
+├── 📝 __init__.py                    # Módulo principal
 │
 ├── 📊 sql_init/                      # Scripts SQL inicialización
 │   ├── 01_extensions.sql
 │   ├── 02_schema.sql
 │   └── 03_views.sql
 │
-├── 🧹 scripts/                       # 🆕 SCRIPTS ADAPTADOS V2.0
-│   ├── cargar_poblacion.py           # 🆕 Integrado con poblacion.py
-│   ├── cargar_vacunacion.py          # 🆕 Con FechaNacimiento
-│   ├── cargar_casos.py               # 🆕 Con mapeo veredal
-│   ├── cargar_epizootias.py          # 🆕 Con geolocalización
+├── 🧹 scripts/                       # 🆕 SCRIPTS CORREGIDOS V2.0
+│   ├── __init__.py                   # 🆕 Módulo scripts
+│   ├── cargar_poblacion.py           # 🆕 Solo código DIVIPOLA, duplicados mejorados
+│   ├── cargar_vacunacion.py          # 🆕 Edad con fecha actual
+│   ├── cargar_casos.py               # 🆕 Municipio procedencia, edad actual
+│   ├── cargar_epizootias.py          # 🆕 Contexto municipal, sin calculados
 │   ├── cargar_geodata.py             # Unidades territoriales
-│   ├── sistema_coordinador.py        # 🆕 Coordinador maestro
-│   └── monitor_sistema.py            # 🆕 Monitor avanzado
+│   ├── sistema_coordinador.py        # Coordinador maestro
+│   ├── monitor_sistema.py            # Monitor avanzado
+│   └── alertas_diarias.py            # 🆕 Sistema alertas automatizado
 │
 ├── 📂 data/                          # Datos de entrada
 │   ├── poblacion_veredas.csv         # CSV SISBEN sin headers
 │   ├── paiweb.xlsx                   # Datos vacunación
 │   ├── casos.xlsx                    # Casos fiebre amarilla
 │   ├── epizootias.xlsx               # Muertes animales
-│   └── tolima_cabeceras_veredas.gpkg # 🆕 CÓDIGOS DIVIPOLA
+│   └── tolima_cabeceras_veredas.gpkg # 🔴 OBLIGATORIO códigos DIVIPOLA
 │
-├── 🗺️ dashboard/                     # Dashboard Streamlit
 ├── 🔄 backups/                       # Respaldos automáticos
-├── 📝 logs/                          # Logs del sistema
+├── 📝 logs/                          # Logs del sistema + alertas diarias
 └── 📊 reportes/                      # Reportes generados
 ```
 
-## 🎯 Instalación Rápida
+## 🚀 Instalación Corregida V2.0
 
-### 1. Clonar y Preparar Entorno
+### 1. Setup Inteligente (RECOMENDADO)
 ```bash
 git clone <repositorio>
 cd epidemiologia_tolima
+
+# Verificador inteligente - solo instala lo que falta
+python setup_sistema.py
+```
+
+### 2. Manual (Alternativo)
+```bash
+# Instalar dependencias corregidas
 python -m pip install -r requirements.txt
-```
 
-### 2. Iniciar PostgreSQL
-```bash
+# Iniciar PostgreSQL
 docker-compose up -d
-# Esperar ~30 segundos para inicialización completa
-```
 
-### 3. Verificar Instalación
-```bash
+# Esperar inicialización
+sleep 30
+
+# Verificar sistema
 python test_conexion.py
 ```
 
-### 4. Colocar Archivos de Datos
-Copiar archivos en `data/`:
-- `poblacion_veredas.csv` - CSV SISBEN **sin headers**
-- `paiweb.xlsx` - Datos PAIweb con columnas requeridas
-- `casos.xlsx` - Casos fiebre amarilla
-- `epizootias.xlsx` - Epizootias con coordenadas
-- `tolima_cabeceras_veredas.gpkg` - **OBLIGATORIO** para códigos DIVIPOLA
+## 🎯 Uso del Sistema Corregido
 
-## ⚙️ Configuración Centralizada
-
-El archivo `config.py` centraliza toda la configuración del sistema:
-
-### Códigos DIVIPOLA Automáticos
-```python
-from config import buscar_codigo_municipio, buscar_codigo_vereda
-
-# Buscar código municipal
-codigo = buscar_codigo_municipio("Ibagué")  # Retorna: "73001"
-
-# Buscar código veredal con contexto
-codigo_vereda = buscar_codigo_vereda("La Esperanza", "Ibagué")
-```
-
-### Grupos Etarios Centralizados
-```python
-from config import clasificar_grupo_etario, obtener_grupos_etarios_definidos
-
-# Clasificar edad en meses
-grupo = clasificar_grupo_etario(30)  # "02-19 años"
-
-# Obtener todos los grupos
-grupos = obtener_grupos_etarios_definidos()
-```
-
-### Validación de Fechas
-```python
-from config import limpiar_fecha_robusta
-
-fecha = limpiar_fecha_robusta("15/01/2024")  # Maneja múltiples formatos
-```
-
-## 🔧 Scripts Principales V2.0
-
-### Sistema Coordinador (RECOMENDADO)
+### 1. Verificación Sistema
 ```bash
-# Actualización completa automática
+# Verificación completa sin datos de prueba
+python test_conexion.py
+```
+
+### 2. Colocar Archivos Datos
+```bash
+# Copiar archivos en data/
+cp tu_poblacion.csv data/poblacion_veredas.csv
+cp tu_paiweb.xlsx data/paiweb.xlsx
+cp tu_casos.xlsx data/casos.xlsx
+cp tu_epizootias.xlsx data/epizootias.xlsx
+cp tu_territorios.gpkg data/tolima_cabeceras_veredas.gpkg  # OBLIGATORIO
+```
+
+### 3. Carga Automática Completa
+```bash
+# Sistema coordinador maestro
 python scripts/sistema_coordinador.py --completo
-
-# Modo interactivo
-python scripts/sistema_coordinador.py --menu
-
-# Solo verificar archivos
-python scripts/sistema_coordinador.py --verificar
 ```
 
-### Scripts Individuales
-
-#### 1. Cargar Población (Integrado)
+### 4. Cargas Individuales (Alternativo)
 ```bash
+# Población con código DIVIPOLA únicamente
 python scripts/cargar_poblacion.py
-```
-- ✅ **Procesa CSV SISBEN sin headers automáticamente**
-- ✅ Ejecuta lógica completa de `poblacion.py`
-- ✅ Asigna códigos DIVIPOLA desde `.gpkg`
-- ✅ Genera conteos agregados por municipio/ubicación/grupo etario
 
-#### 2. Cargar Vacunación (Corregido)
-```bash
-python scripts/cargar_vacunacion.py
-```
-- ✅ **Usa FechaNacimiento para calcular edad correctamente**
-- ✅ Solo columnas necesarias: `Departamento`, `Municipio`, `Institucion`, `fechaaplicacion`, `FechaNacimiento`, `TipoUbicación`
-- ✅ **Datos completamente anónimos** (elimina fecha nacimiento post-cálculo)
-- ✅ Asigna códigos municipales automáticamente
+# Vacunación con edad calculada fecha actual
+python scripts/cargar_vacunacion.py  
 
-#### 3. Cargar Casos (Mapeo Veredal)
-```bash
+# Casos con municipio procedencia y edad actual
 python scripts/cargar_casos.py
-```
-- ✅ **Mapeo completo de todas las columnas disponibles**
-- ✅ **Búsqueda automática de códigos veredales** desde `.gpkg`
-- ✅ Procesa síntomas, condiciones finales, vacunación previa
-- ✅ Calcula edad desde fecha nacimiento cuando disponible
 
-#### 4. Cargar Epizootias (Geoespacial)
-```bash
+# Epizootias con contexto municipal
 python scripts/cargar_epizootias.py
 ```
-- ✅ **Mapeo veredal con coordenadas geográficas**
-- ✅ Validación de coordenadas para Colombia
-- ✅ **Geometrías PostGIS automáticas**
-- ✅ Procesamiento de resultados de laboratorio
 
-#### 5. Monitor Avanzado
+### 5. Sistema de Alertas Diarias
 ```bash
-# Monitoreo completo
+# Verificación inmediata
+python scripts/alertas_diarias.py
+
+# Programar alertas automáticas diarias
+python scripts/alertas_diarias.py
+# Seleccionar opción 2: "Programar alertas automáticas"
+```
+
+### 6. Monitoreo Sistema
+```bash
+# Monitor completo
 python scripts/monitor_sistema.py --completo
 
-# Modo interactivo  
-python scripts/monitor_sistema.py
-
-# Solo alertas
+# Solo alertas generales
 python scripts/monitor_sistema.py --alertas
 ```
 
-## 📊 Mapeo de Columnas
+## 📊 Mapeos de Datos Corregidos
 
-### PAIweb (Vacunación) - Solo Necesarias
-| Campo BD | Columna Excel | Descripción |
-|----------|---------------|-------------|
-| `departamento` | `Departamento` | Departamento |
-| `municipio` | `Municipio` | Municipio aplicación |
-| `institucion` | `Institucion` | IPS aplicadora |
-| `fecha_aplicacion` | `fechaaplicacion` | Fecha aplicación |
-| `fecha_nacimiento` | `FechaNacimiento` | **Para cálculo edad** |
-| `tipo_ubicacion` | `TipoUbicación` | Urbano/Rural |
+### Población SISBEN (CSV sin headers)
+```python
+# Mapeos locales en cargar_poblacion.py
+MAPEO_POBLACION_SISBEN = {
+    'codigo_municipio': 1,    # col_1 - Código DIVIPOLA (PRINCIPAL)
+    'municipio': 2,           # col_2 - Nombre municipio  
+    'tipo_documento': 16,     # col_16 - Tipo documento (CC, TI, CE, etc.)
+    'documento': 17,          # col_17 - Número documento
+    'fecha_nacimiento': 18    # col_18 - Para calcular edad
+}
+```
+- ✅ **Solo código DIVIPOLA** como identificador municipal
+- ✅ **Duplicados por:** `tipo_documento` + `numero_documento` 
+- ✅ **Edad:** Calculada con fecha actual
 
-### Casos Fiebre Amarilla - Completo
-| Campo BD | Columna Excel | Descripción |
-|----------|---------------|-------------|
-| `fecha_notificacion` | `fec_not` | Fecha notificación |
-| `vereda_infeccion` | `vereda_` | **Vereda donde ocurrió caso** |
-| `inicio_sintomas` | `ini_sin_` | **Fecha inicio síntomas** |
-| `fecha_nacimiento` | `fecha_nto_` | Para calcular edad |
-| `condicion_final` | `con_fin_` | 1=Vivo, 2=Muerto |
-| `carnet_vacunacion` | `carne_vacu` | 1=Sí, 2=No |
-| `codigo_municipio_infeccion` | `codmuninfe` | Código DIVIPOLA municipal |
+### Vacunación PAIweb
+```python
+# Mapeos locales en cargar_vacunacion.py
+MAPEO_VACUNACION_EXCEL = {
+    'municipio': 'Municipio',
+    'fecha_aplicacion': 'fechaaplicacion',
+    'fecha_nacimiento': 'FechaNacimiento',  # Para calcular edad
+    'tipo_ubicacion': 'TipoUbicación'
+}
+```
+- ✅ **Edad calculada:** Entre `FechaNacimiento` y **fecha actual**
+- ✅ **Datos anónimos:** FechaNacimiento eliminada post-cálculo
 
-*+ 50+ columnas adicionales de síntomas, datos epidemiológicos, etc.*
+### Casos Fiebre Amarilla  
+```python
+# Mapeos locales en cargar_casos.py
+MAPEO_CASOS_EXCEL = {
+    'municipio_procedencia': 'nmun_proce',  # ← CORREGIDO: Donde se infectó
+    'vereda_infeccion': 'vereda_',          # ← Vereda infección
+    'fecha_nacimiento': 'fecha_nto_',       # Para calcular edad
+    'municipio_residencia': 'nmun_resi',    # Donde vive
+    'municipio_notificacion': 'nmun_notif'  # Donde se notificó
+}
+```
+- ✅ **Municipio procedencia:** Campo `nmun_proce` para contexto veredal
+- ✅ **Mapeo veredal:** Con contexto municipio procedencia
+- ✅ **Edad actual:** Calculada con fecha de hoy
 
-### Epizootias - Geoespacial
-| Campo BD | Columna Excel | Descripción |
-|----------|---------------|-------------|
-| `municipio` | `MUNICIPIO` | Municipio |
-| `vereda` | `VEREDA` | **Vereda para mapeo DIVIPOLA** |
-| `fecha_recoleccion` | `FECHA_RECOLECCION` | Fecha recolección muestra |
-| `latitud` | `LATITUD` | Coordenada Y |
-| `longitud` | `LONGITUD` | Coordenada X |
-| `especie` | `ESPECIE` | Especie animal |
-| `resultado_pcr` | `RESULTADO_PCR` | Resultado laboratorio |
+### Epizootias
+```python
+# Mapeos locales en cargar_epizootias.py  
+MAPEO_EPIZOOTIAS_EXCEL = {
+    'municipio': 'MUNICIPIO',
+    'vereda': 'VEREDA',
+    'latitud': 'LATITUD',
+    'longitud': 'LONGITUD',
+    'fecha_recoleccion': 'FECHA_RECOLECCION',
+    'resultado_pcr': 'RESULTADO_PCR'
+}
+```
+- ✅ **Contexto municipal:** Búsqueda veredal con municipio como contexto
+- ✅ **Datos originales:** Sin campos calculados adicionales
 
-### Población SISBEN - Por Índice (Sin Headers)
-| Campo BD | Índice Columna | Descripción |
-|----------|----------------|-------------|
-| `codigo_municipio` | `col_1` | Código DIVIPOLA |
-| `municipio` | `col_2` | Nombre municipio |
-| `corregimiento` | `col_6` | Corregimiento |
-| `vereda` | `col_8` | Vereda |
-| `barrio` | `col_10` | Barrio |
-| `documento` | `col_17` | Número documento |
-| `fecha_nacimiento` | `col_18` | Fecha nacimiento |
+## 🚨 Sistema de Alertas Diarias Automatizado
 
-## 🗺️ Códigos DIVIPOLA Automáticos
+### Tipos de Alertas por Archivo
 
-El sistema usa el archivo `.gpkg` para asignar códigos automáticamente:
+| Archivo | Criticidad | Umbral | Descripción |
+|---------|------------|--------|-------------|
+| Casos FA | **CRÍTICA** | 3 días | Vigilancia epidemiológica urgente |
+| Vacunación | **ALTA** | 7 días | Actualización semanal esperada |
+| Población | **ALTA** | 30 días | Base de denominadores (mensual) |  
+| Epizootias | **MEDIA** | 14 días | Vigilancia animal (quincenal) |
+| Territorios | **BAJA** | 90 días | Códigos DIVIPOLA (trimestral) |
 
-### Estructura `.gpkg` Requerida
-```sql
--- Campos obligatorios en tolima_cabeceras_veredas.gpkg
-tipo                -- 'departamento', 'municipio', 'vereda', 'cabecera'
-codigo_divipola     -- Código completo (ej: "7300101001" para vereda)
-codigo_municipio    -- Código municipal (ej: "73001")
-nombre              -- Nombre territorio
-municipio           -- Municipio padre (para veredas)
-geometria           -- Geometría MultiPolygon
+### Configuración Alertas
+```bash
+# Archivo: scripts/alertas_diarias.py
+python scripts/alertas_diarias.py
+
+# Opciones:
+# 1. Verificación inmediata
+# 2. Programar automáticas (8:00 AM diario)
+# 3. Solo verificar archivos  
+# 4. Solo verificar base datos
 ```
 
-### Búsqueda Inteligente
-- **Municipios**: Búsqueda exacta + similitud fonética
-- **Veredas**: Búsqueda con contexto municipal para mayor precisión
-- **Normalización**: Maneja acentos, mayúsculas, espacios
-- **Mapeos especiales**: "San Sebastián de Mariquita" → "Mariquita"
+### Logs de Alertas
+- **Ubicación:** `logs/alertas_diarias_YYYYMMDD_HHMMSS.txt`
+- **Frecuencia:** Diaria automática + manual cuando se necesite
+- **Contenido:** Estado archivos + base datos + resumen ejecutivo
 
-## 🔄 Flujo de Trabajo Recomendado
+## 🔧 Herramientas de Verificación
 
-### Actualización Completa
+### Setup Sistema (Nuevo)
 ```bash
-# 1. Colocar archivos actualizados en data/
-# 2. Ejecutar coordinador completo
-python scripts/sistema_coordinador.py --completo
+python setup_sistema.py
 
-# 3. Verificar resultados
+# Opciones:
+# 1. 🔍 Verificación inteligente (recomendado)
+# 2. 🚀 Setup completo desde cero  
+# 3. 👋 Salir
+```
+
+### Test Conexión (Corregido)
+```bash
+python test_conexion.py
+# - NO genera datos de prueba
+# - Solo verificaciones reales
+# - Funciona únicamente con datos originales
+```
+
+### Monitor Sistema
+```bash
+# Completo con estadísticas avanzadas
 python scripts/monitor_sistema.py --completo
 
-# 4. Conectar dashboard/análisis
-```
+# Solo resumen
+python scripts/monitor_sistema.py --resumen
 
-### Actualización Parcial
-```bash
-# Solo población actualizada
-python scripts/cargar_poblacion.py
-
-# Solo vacunación nueva
-python scripts/cargar_vacunacion.py
-
-# Verificar integridad
+# Solo alertas generales (no archivos)
 python scripts/monitor_sistema.py --alertas
 ```
 
-## 📈 Análisis y Consultas
+## 📈 Análisis de Datos
 
-### Vistas Principales Disponibles
+### Vistas Disponibles
 - `v_coberturas_dashboard` - Coberturas por municipio/grupo/ubicación
 - `v_mapa_coberturas` - Datos agregados para mapas
-- `v_indicadores_clave` - Indicadores departamentales
+- `v_indicadores_clave` - Indicadores departamentales  
 - `v_casos_dashboard` - Casos epidemiológicos
 
 ### Consultas Ejemplo
 ```sql
--- Cobertura por municipio
-SELECT municipio, cobertura_porcentaje, vacunados, poblacion_total
+-- Cobertura por municipio (solo código DIVIPOLA)
+SELECT codigo_municipio, cobertura_porcentaje, vacunados, poblacion_total
 FROM v_coberturas_dashboard
 WHERE cobertura_porcentaje < 70
 ORDER BY cobertura_porcentaje ASC;
 
--- Casos por vereda (con código DIVIPOLA)
-SELECT municipio_residencia, vereda_infeccion, codigo_divipola_vereda,
-       COUNT(*) as casos
-FROM casos_fiebre_amarilla
-WHERE codigo_divipola_vereda IS NOT NULL
-GROUP BY municipio_residencia, vereda_infeccion, codigo_divipola_vereda;
+-- Casos por municipio procedencia (donde se infectaron)
+SELECT municipio_procedencia, COUNT(*) as casos
+FROM casos_fiebre_amarilla  
+WHERE municipio_procedencia IS NOT NULL
+GROUP BY municipio_procedencia
+ORDER BY casos DESC;
 ```
-
-## 🚨 Sistema de Alertas
-
-El monitor genera alertas automáticas:
-
-- 🔴 **Críticas**: Municipios sin vacunación, cobertura <50%
-- ⚠️ **Atención**: Datos desactualizados, instituciones inactivas  
-- 📅 **Info**: Métricas temporales, actualizaciones
 
 ## 🛠️ Herramientas Disponibles
 
-### Interfaces de Base de Datos
-- **pgAdmin**: http://localhost:8080 (admin@tolima.gov.co / admin123)
-- **DBeaver**: Conexión PostgreSQL recomendada
-- **Conexión directa**: `postgresql://tolima_admin:tolima2025!@localhost:5432/epidemiologia_tolima`
+### PostgreSQL
+- **Servidor:** localhost:5432
+- **BD:** epidemiologia_tolima  
+- **Usuario:** tolima_admin
+- **Contraseña:** tolima2025!
 
-### Monitoreo y Reportes
+### pgAdmin  
+- **URL:** http://localhost:8080
+- **Usuario:** admin@tolima.gov.co
+- **Contraseña:** admin123
+
+### Archivos de Configuración
+- **Docker:** `docker-compose.yml`
+- **Variables:** `.env` (generado automáticamente)
+- **Dependencias:** `requirements.txt` (fpdf2 corregido)
+
+## 📋 Resolución de Problemas
+
+### Error: Archivo .gpkg no encontrado
 ```bash
-# Reportes HTML automáticos
-python scripts/monitor_sistema.py --completo
-
-# Logs detallados en logs/
-# Backups automáticos en backups/
-```
-
-## 📋 Validaciones del Sistema
-
-### Criterios de Exclusión Automáticos
-1. ❌ Fechas nacimiento nulas/futuras
-2. ❌ Edades <0 o >90 años  
-3. ❌ Registros duplicados por documento
-4. ❌ Municipios fuera del Tolima
-5. ❌ Coordenadas fuera de Colombia
-
-### Criterios de Inclusión
-1. ✅ Solo grupos etarios definidos en CSV final
-2. ✅ Códigos DIVIPOLA válidos desde `.gpkg`
-3. ✅ Fechas dentro de rangos epidemiológicos
-4. ✅ Datos anonimizados completamente
-
-## 🔧 Solución de Problemas
-
-### Error: "Archivo .gpkg no encontrado"
-```bash
-# Verificar que existe data/tolima_cabeceras_veredas.gpkg
+# Verificar archivo obligatorio
 ls -la data/tolima_cabeceras_veredas.gpkg
 
-# Recargar códigos DIVIPOLA
-python -c "from config import cargar_codigos_divipola_desde_gpkg; cargar_codigos_divipola_desde_gpkg(True)"
+# Si no existe, conseguir archivo .gpkg con:
+# - Campo 'tipo': municipio, vereda, cabecera
+# - Campo 'codigo_divipola': Código completo  
+# - Campo 'municipio': Para contexto veredal
 ```
 
-### Error: "No hay columns mapeadas"
+### Error: Columnas no mapeadas
 ```bash
 # Verificar estructura Excel
 python -c "import pandas as pd; print(pd.read_excel('data/casos.xlsx').columns.tolist())"
 
-# El mapeo está en config.py - verificar nombres exactos
+# Los mapeos están en cada script individual
+# Verificar MAPEO_*_EXCEL en el script correspondiente
 ```
 
-### Error: PostgreSQL conexión
+### PostgreSQL no responde
 ```bash
 # Reiniciar servicios
 docker-compose down && docker-compose up -d
+sleep 30
 
-# Verificar logs
-docker-compose logs postgres
-
-# Probar conexión
+# Verificar conexión
 python test_conexion.py
 ```
 
-## 📞 Soporte Técnico
-
-### Logs del Sistema
-- `logs/actualizacion_sistema_*.txt` - Logs coordinador
-- `logs/reporte_avanzado_*.html` - Reportes HTML
-- `backups/*_backup_*.csv` - Respaldos automáticos
-
-### Verificaciones de Integridad
+### Sistema de alertas no funciona
 ```bash
-# Verificar todos los componentes
-python scripts/sistema_coordinador.py --verificar
+# Verificar archivos críticos
+python scripts/alertas_diarias.py
+# Seleccionar opción 3: "Solo verificar archivos"
 
-# Monitor completo con alertas
-python scripts/monitor_sistema.py --completo
+# Ver logs de alertas
+ls -la logs/alertas_diarias_*.txt
 ```
 
----
+## 🎯 Flujo de Trabajo Recomendado
 
-## 🎉 ¡Sistema Listo!
+### 1. Setup Inicial
+```bash
+python setup_sistema.py           # Verificar/instalar componentes
+python test_conexion.py          # Verificar sin datos prueba
+```
 
-Tu Sistema Epidemiológico Tolima V2.0 está configurado con:
-- ✅ **Configuración centralizada** para fácil mantenimiento
-- ✅ **Mapeo automático** de códigos DIVIPOLA
-- ✅ **Búsqueda inteligente** de veredas y municipios
-- ✅ **Validaciones robustas** de datos
-- ✅ **Anonimización completa** para protección de datos
-- ✅ **Sistema coordinador** para actualizaciones masivas
-- ✅ **Monitor avanzado** con alertas epidemiológicas
+### 2. Preparar Datos
+```bash
+# Colocar archivos en data/
+# OBLIGATORIO: tolima_cabeceras_veredas.gpkg
+```
 
-**¡Vigilancia epidemiológica de Tolima automatizada y lista para usar!** 🚀
+### 3. Carga Completa  
+```bash
+python scripts/sistema_coordinador.py --completo
+```
+
+### 4. Verificación Diaria
+```bash
+python scripts/alertas_diarias.py    # Configurar alertas automáticas
+python scripts/monitor_sistema.py --completo  # Monitor general
+```
+
+### 5. Análisis
+- **DBeaver:** Para consultas SQL avanzadas
+- **pgAdmin:** Para administración visual
+- **Vistas:** Para datos agregados listos
+
+## 📞 Notas Importantes V2.0
+
+### ✅ **Correcciones Aplicadas:**
+1. **Config centralizada:** Solo elementos globales, mapeos locales en scripts
+2. **Edad actual:** Siempre calculada con fecha de hoy  
+3. **Población optimizada:** Solo código DIVIPOLA, duplicados mejorados
+4. **Casos corregidos:** Municipio procedencia, contexto veredal correcto
+5. **Epizootias mejoradas:** Contexto municipal, datos originales
+6. **Alertas enfocadas:** Solo actualización archivos, no datos internos
+7. **Setup inteligente:** Solo instala lo necesario  
+8. **Test real:** Sin datos de prueba, solo verificaciones
+9. **Dependencias actualizadas:** fpdf2 versión correcta
+
+### 🎉 **Sistema V2.0 Listo!**
+
+Tu Sistema Epidemiológico Tolima V2.0 está completamente **CORREGIDO** con:
+- ✅ Configuración centralizada optimizada
+- ✅ Cálculos de edad corregidos
+- ✅ Mapeos específicos localizados  
+- ✅ Sistema de alertas automatizado
+- ✅ Verificaciones inteligentes
+- ✅ Datos procesados correctamente
+
+**¡Vigilancia epidemiológica de Tolima corregida y lista para usar!** 🚀

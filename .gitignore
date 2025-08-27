@@ -1,8 +1,19 @@
+# =====================================
+# .gitignore - Sistema Epidemiológico Tolima V2.0
+# =====================================
+
+# =====================================
+# PYTHON
+# =====================================
+
 # Entornos virtuales
 venv/
 env/
 .venv/
 .env/
+ENV/
+env.bak/
+venv.bak/
 .python-version
 
 # Archivos de caché de Python
@@ -10,101 +21,455 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Distribución / empaquetado
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 .nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
 
-# Archivos de datos grandes o sensibles
-*.csv
-*.xlsx
-!sample_data.xlsx
-!datasets/sample/
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# =====================================
+# DATOS SENSIBLES Y CRÍTICOS
+# =====================================
+
+# Archivos de datos epidemiológicos (NUNCA subir datos reales)
+data/*.csv
+data/*.xlsx
+data/*.xls
+data/*.gpkg
+data/*.shp
+data/*.dbf
+data/*.shx
+data/*.prj
+data/*.cpg
+
+# Excepciones: archivos de ejemplo o plantillas
+!data/ejemplos/
+!data/plantillas/
+!data/README.md
+!data/.gitkeep
+
+# Datos procesados
+data/processed/
+processed_data/
+output/
+results/
+
+# Archivos grandes de datos geoespaciales
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.gdb/
 *.parquet
 *.feather
-*.sqlite
-*.db
-data/processed
-data/shapefiles
+*.h5
+*.hdf5
 
-# Secretos y configuración
-.streamlit/secrets.toml
+# =====================================
+# CONFIGURACIÓN Y SECRETOS
+# =====================================
+
+# Variables de entorno (pueden contener contraseñas)
 .env
+.env.local
+.env.production
+.env.staging
+.env.development
+
+# Configuración con secretos
+secrets.toml
+.streamlit/secrets.toml
 credentials.json
 token.json
 config.ini
+settings.ini
 
-# Archivos del sistema
-.DS_Store
-Thumbs.db
-desktop.ini
-*.tmp
+# Certificados y llaves
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# =====================================
+# LOGS Y RESPALDOS
+# =====================================
+
+# Logs del sistema
+*.log
+logs/
+log/
+log.txt
+
+# Archivos de respaldo
+backups/
+backup/
 *.bak
-*.swp
+*.backup
+*.dump
+*.sql.gz
 
-# Archivos de IDE
-.idea/
+# Reportes generados
+reportes/*.html
+reportes/*.pdf
+reportes/*.xlsx
+reportes/*.png
+reportes/*.jpg
+reportes/*.svg
+
+# Excepciones: mantener estructura y ejemplos
+!logs/.gitkeep
+!backups/.gitkeep
+!reportes/.gitkeep
+!reportes/ejemplos/
+
+# =====================================
+# BASE DE DATOS
+# =====================================
+
+# SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# PostgreSQL dumps
+*.dump
+*.sql
+
+# Archivos de migración temporales
+migrations/versions/*.pyc
+
+# =====================================
+# DOCKER Y CONTENEDORES
+# =====================================
+
+# Volúmenes de Docker (datos persistentes)
+postgres_data/
+pgdata/
+docker_postgres_data/
+
+# Logs de contenedores
+docker-logs/
+
+# Archivos temporales de Docker
+.dockerignore.bak
+
+# =====================================
+# ARCHIVOS DEL SISTEMA OPERATIVO
+# =====================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =====================================
+# EDITORES E IDEs
+# =====================================
+
+# Visual Studio Code
 .vscode/
 *.code-workspace
-*.sublime-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Sublime Text
 *.sublime-project
-.project
-.settings/
-.classpath
+*.sublime-workspace
+
+# Vim
 *.swp
 *.swo
 *~
+.netrwhist
 
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
 
-.streamlit/secrets.toml
-*.json
+# Atom
+.atom/
 
-
-# Archivos de log
-*.log
-logs/
-log.txt
-
-# Directorios de build y distribución
-dist/
-build/
-*.egg-info/
-.eggs/
-*.egg
-__pypackages__/
+# =====================================
+# ARCHIVOS TEMPORALES Y CACHÉ
+# =====================================
 
 # Archivos temporales
 temp/
 tmp/
-.ipynb_checkpoints/
+*.tmp
+*.bak
+*.swp
+*.swo
 
-# Modelos y archivos pesados
-*.pt
-*.h5
-*.joblib
-*.pickle
-*.pkl
+# Archivos de caché específicos del proyecto
+.cache/
+__temp/
+.temp/
 
-# Imágenes generadas
-output/
-results/
-figures/
+# Archivos de thumbnails
 *.png
 *.jpg
 *.jpeg
 *.gif
 *.svg
-!assets/images/logo_gobernacion.png
+*.webp
 
-# Documentación generada
+# Excepciones: logos e imágenes necesarias
+!assets/
+!assets/**
+!static/images/
+!docs/images/
+!README_images/
+
+# =====================================
+# ESPECÍFICOS DEL PROYECTO EPIDEMIOLÓGICO
+# =====================================
+
+# Modelos entrenados y archivos pesados
+models/
+*.pkl
+*.pickle
+*.joblib
+*.pt
+*.pth
+*.h5
+*.model
+
+# Datos de prueba generados automáticamente
+test_data/
+mock_data/
+fake_data/
+
+# Archivos de configuración específicos del despliegue
+docker-compose.override.yml
+docker-compose.production.yml
+docker-compose.staging.yml
+
+# Archivos de monitoreo y alertas sensibles
+alertas_privadas/
+notificaciones/
+emails/
+
+# Exportaciones temporales
+exports/
+downloads/
+
+# Cache de procesamiento
+processing_cache/
+.processing_cache/
+
+# =====================================
+# STREAMLIT Y DASHBOARD
+# =====================================
+
+# Archivos de estado de Streamlit
+.streamlit/
+streamlit_cache/
+
+# =====================================
+# JUPYTER Y NOTEBOOKS
+# =====================================
+
+# Checkpoints de Jupyter
+.ipynb_checkpoints
+
+# Archivos de configuración local
+jupyter_config.py
+.jupyter/
+
+# =====================================
+# OTROS FRAMEWORKS Y LIBRERÍAS
+# =====================================
+
+# FastAPI
+*.db
+
+# Flask
+instance/
+.webassets-cache
+
+# Scrapy
+.scrapy
+
+# Sphinx documentation
 docs/_build/
-site/
-.cache/
 
-# Streamlit specific
-.streamlit/watch/
+# PyBuilder
+target/
 
-# Cache files
-*.pyc
-.cache
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# =====================================
+# ARCHIVOS DE CONFIGURACIÓN LOCAL
+# =====================================
+
+# Configuraciones locales del desarrollador
+config.local.py
+settings.local.py
+local_settings.py
+
+# Archivos de prueba local
+test_local/
+pruebas_locales/
+
+# =====================================
+# MANTENER ESTRUCTURA DE DIRECTORIOS
+# =====================================
+
+# Mantener directorios vacíos con .gitkeep
+!**/.gitkeep
+
+# =====================================
+# NOTAS IMPORTANTES
+# =====================================
+
+# NUNCA subir:
+# - Datos reales de pacientes (CSV, Excel)
+# - Configuraciones con contraseñas  
+# - Archivos de logs con información sensible
+# - Backups de base de datos
+# - Archivos temporales de procesamiento
+# - Modelos o caches grandes
+
+# SIEMPRE mantener:
+# - Scripts de procesamiento
+# - Configuración de Docker
+# - Documentación
+# - Ejemplos no sensibles
+# - Estructura de directorios (.gitkeep)

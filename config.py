@@ -3,6 +3,7 @@
 """
 config.py - Configuración Centralizada Sistema Epidemiológico Tolima
 Configuración única con mapeo centralizado de códigos DIVIPOLA desde .gpkg
+SOLO elementos globales y compartidos
 """
 
 import os
@@ -254,10 +255,10 @@ def buscar_codigo_vereda(nombre_vereda, municipio_contexto=None):
     return None
 
 # ================================
-# MAPEOS Y NORMALIZACIONES
+# MAPEOS Y NORMALIZACIONES GLOBALES
 # ================================
 
-# Mapeo de nombres especiales de municipios
+# Mapeo de nombres especiales de municipios (GLOBAL - usado en múltiples scripts)
 MAPEO_MUNICIPIOS_ESPECIALES = {
     "SAN SEBASTIÁN DE MARIQUITA": "MARIQUITA",
     "SAN SEBASTIAN DE MARIQUITA": "MARIQUITA",
@@ -343,131 +344,7 @@ def limpiar_fecha_robusta(fecha_input):
         return None
 
 # ================================
-# MAPEOS DE COLUMNAS PARA ARCHIVOS EXCEL
-# ================================
-
-# CASOS - Mapeo correcto: nombre_bd: nombre_excel
-MAPEO_CASOS_EXCEL = {
-    'fecha_notificacion': 'fec_not',
-    'semana_epidemiologica': 'semana',
-    'codigo_prestador': 'cod_pre',
-    'primer_nombre': 'pri_nom_',
-    'segundo_nombre': 'seg_nom_',
-    'primer_apellido': 'pri_ape_',
-    'segundo_apellido': 'seg_ape_',
-    'tipo_documento': 'tip_ide_',
-    'numero_documento': 'num_ide_',
-    'edad': 'edad_',
-    'sexo': 'sexo_',
-    'area_residencia': 'area_',
-    'vereda_infeccion': 'vereda_',
-    'ocupacion': 'ocupacion_',
-    'tipo_seguridad_social': 'tip_ss_',
-    'codigo_aseguradora': 'cod_ase_',
-    'pertenencia_etnica': 'per_etn_',
-    'estrato': 'estrato_',
-    'grupo_discapacidad': 'gp_discapacidad',
-    'grupo_desplazado': 'gp_desplazado',
-    'grupo_migrante': 'gp_migrante',
-    'grupo_carcelario': 'gp_carcela',
-    'grupo_gestante': 'gp_gestante',
-    'semanas_gestacion': 'sem_ges_',
-    'grupo_indigena': 'gp_indigena',
-    'poblacion_icbf': 'gp_pobicbf',
-    'madres_comunitarias': 'gp_mad_com',
-    'grupo_desmovilizados': 'gp_desmovim',
-    'grupo_psiquiatricos': 'gp_psiquiatr',
-    'victimas_violencia': 'gp_vic_viol',
-    'grupo_otros': 'gp_otros',
-    'fuente_informacion': 'fuente_',
-    'fecha_consulta': 'fec_con_',
-    'inicio_sintomas': 'ini_sin_',
-    'tipo_caso': 'tip_cas_',
-    'paciente_hospitalizado': 'pac_hos_',
-    'fecha_hospitalizacion': 'fec_hos_',
-    'condicion_final': 'con_fin_',
-    'fecha_defuncion': 'fec_def_',
-    'telefono': 'telefono_',
-    'fecha_nacimiento': 'fecha_nto_',
-    'certificado_defuncion': 'cer_def_',
-    'carnet_vacunacion': 'carne_vacu',
-    'fecha_vacunacion': 'fec_fa1_',
-    'fiebre': 'fiebre',
-    'mialgias': 'malgias',
-    'artralgias': 'artralgias_',
-    'cefalea': 'cefalea',
-    'vomitos': 'vomito',
-    'ictericia': 'ictericia',
-    'sangrado': 'sfaget',
-    'oliguria': 'oliguria',
-    'shock': 'shock',
-    'bradicardia': 'bradicardi',
-    'falla_renal': 'falla_renal',
-    'falla_hepatica': 'falla_hepa',
-    'hepatomegalia': 'hepatomega',
-    'hemoptisis': 'hemoptisis',
-    'hiperemia': 'hipiremia',
-    'hematemesis': 'hematemesi',
-    'petequias': 'petequias',
-    'metrorragia': 'metrorragi',
-    'melenas': 'melenas',
-    'equimosis': 'equimosis',
-    'epistaxis': 'epistaxis',
-    'hematuria': 'hematuria',
-    'caso_familiar': 'cas_fam',
-    'codigo_municipio_infeccion': 'codmuninfe',
-    'nombre_upgd': 'nom_upgd',
-    'pais_procedencia': 'npais_procen',
-    'departamento_procedencia': 'ndep_proce',
-    'municipio_procedencia': 'nmun_proce',
-    'pais_residencia': 'npais_resi',
-    'departamento_residencia': 'ndep_resi',
-    'municipio_residencia': 'nmun_resi',
-    'departamento_notificacion': 'ndep_notif',
-    'municipio_notificacion': 'nmun_notif'
-}
-
-# EPIZOOTIAS - Mapeo correcto: nombre_bd: nombre_excel
-MAPEO_EPIZOOTIAS_EXCEL = {
-    'municipio': 'MUNICIPIO',
-    'vereda': 'VEREDA',
-    'fecha_recoleccion': 'FECHA_RECOLECCION',
-    'informante': 'INFORMANTE',
-    'descripcion': 'DESCRIPCION',
-    'fecha_notificacion': 'FECHA_NOTIFICACION',
-    'especie': 'ESPECIE',
-    'latitud': 'LATITUD',
-    'longitud': 'LONGITUD',
-    'fecha_envio_muestra': 'FECHA_ENVIO_MUESTRA',
-    'resultado_pcr': 'RESULTADO_PCR',
-    'fecha_resultado_pcr': 'FECHA_RESULTADO_PCR',
-    'resultado_histopatologia': 'RESULTADO_HISTOPATOLOGIA',
-    'fecha_resultado_histopatologia': 'FECHA_RESULTADO_HISTOPATOLOGIA'
-}
-
-# VACUNACIÓN PAIweb - Solo columnas necesarias
-MAPEO_VACUNACION_EXCEL = {
-    'departamento': 'Departamento',
-    'municipio': 'Municipio',
-    'institucion': 'Institucion',
-    'fecha_aplicacion': 'fechaaplicacion',
-    'fecha_nacimiento': 'FechaNacimiento',
-    'tipo_ubicacion': 'TipoUbicación'
-}
-
-# POBLACIÓN SISBEN - Por índice de columna (sin headers)
-MAPEO_POBLACION_SISBEN = {
-    'codigo_municipio': 1,     # col_1
-    'municipio': 2,            # col_2
-    'corregimiento': 6,        # col_6
-    'vereda': 8,               # col_8
-    'barrio': 10,              # col_10
-    'documento': 17,           # col_17
-    'fecha_nacimiento': 18     # col_18
-}
-
-# ================================
-# FUNCIONES DE UTILIDAD
+# FUNCIONES DE UTILIDAD GLOBALES
 # ================================
 
 def normalizar_texto_snake_case(texto):
@@ -521,6 +398,56 @@ def determinar_ubicacion_urbano_rural(vereda, corregimiento, barrio):
     return 'Urbano'
 
 # ================================
+# SISTEMA DE ALERTAS DIARIAS
+# ================================
+
+def verificar_actualizacion_archivos():
+    """
+    Verifica si los archivos de datos han sido actualizados recientemente
+    Genera alertas diarias para archivos desactualizados
+    """
+    from datetime import timedelta
+    
+    archivos_criticos = {
+        "Población SISBEN": FileConfig.POBLACION_FILE,
+        "Vacunación PAIweb": FileConfig.PAIWEB_FILE,
+        "Casos Fiebre Amarilla": FileConfig.CASOS_FILE,
+        "Epizootias": FileConfig.EPIZOOTIAS_FILE,
+        "Territorios GPKG": FileConfig.TERRITORIOS_FILE
+    }
+    
+    alertas = []
+    fecha_actual = datetime.now()
+    umbral_dias = 7  # Alertar si archivo no se ha actualizado en 7 días
+    
+    print(f"\n🔍 VERIFICACIÓN ACTUALIZACIÓN ARCHIVOS ({fecha_actual.strftime('%Y-%m-%d %H:%M:%S')})")
+    print("=" * 60)
+    
+    for nombre, ruta in archivos_criticos.items():
+        if not ruta.exists():
+            alerta = f"❌ CRÍTICO: {nombre} - Archivo no encontrado: {ruta}"
+            alertas.append(alerta)
+            print(alerta)
+            continue
+        
+        # Obtener fecha última modificación
+        timestamp_modificacion = os.path.getmtime(ruta)
+        fecha_modificacion = datetime.fromtimestamp(timestamp_modificacion)
+        dias_sin_actualizar = (fecha_actual - fecha_modificacion).days
+        
+        if dias_sin_actualizar > umbral_dias:
+            alerta = f"⚠️ ALERTA: {nombre} - {dias_sin_actualizar} días sin actualizar (última: {fecha_modificacion.strftime('%Y-%m-%d')})"
+            alertas.append(alerta)
+            print(alerta)
+        else:
+            print(f"✅ OK: {nombre} - Actualizado hace {dias_sin_actualizar} días")
+    
+    if not alertas:
+        print("✅ Todos los archivos están actualizados")
+    
+    return alertas
+
+# ================================
 # VARIABLES GLOBALES DE CONVENIENCIA
 # ================================
 DATABASE_URL = DatabaseConfig.get_connection_url()
@@ -551,6 +478,9 @@ def validar_configuracion():
         print(f"🗺️ Códigos DIVIPOLA cargados correctamente")
     else:
         print(f"⚠️ No se pudieron cargar códigos DIVIPOLA")
+    
+    # Verificar archivos
+    alertas = verificar_actualizacion_archivos()
     
     print("✅ Configuración validada correctamente")
 

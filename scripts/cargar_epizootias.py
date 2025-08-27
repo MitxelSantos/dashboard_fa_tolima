@@ -3,6 +3,7 @@
 """
 cargar_epizootias.py - Epizootias → PostgreSQL
 Procesamiento de epizootias (muertes animales) con mapeo veredal desde .gpkg
+CORREGIDO: Contexto municipal para veredas, mapeos locales, sin campos calculados
 """
 
 import pandas as pd
@@ -14,7 +15,7 @@ import os
 
 # Importar configuración centralizada
 from config import (
-    DATABASE_URL, MAPEO_EPIZOOTIAS_EXCEL,
+    DATABASE_URL,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,
     buscar_codigo_vereda, buscar_codigo_municipio,
     normalizar_nombre_territorio
@@ -22,9 +23,30 @@ from config import (
 
 warnings.filterwarnings('ignore')
 
+# ================================
+# MAPEO LOCAL EPIZOOTIAS EXCEL (Solo para este script)
+# ================================
+MAPEO_EPIZOOTIAS_EXCEL = {
+    'municipio': 'MUNICIPIO',
+    'vereda': 'VEREDA',
+    'fecha_recoleccion': 'FECHA_RECOLECCION',
+    'informante': 'INFORMANTE',
+    'descripcion': 'DESCRIPCION',
+    'fecha_notificacion': 'FECHA_NOTIFICACION',
+    'especie': 'ESPECIE',
+    'latitud': 'LATITUD',
+    'longitud': 'LONGITUD',
+    'fecha_envio_muestra': 'FECHA_ENVIO_MUESTRA',
+    'resultado_pcr': 'RESULTADO_PCR',
+    'fecha_resultado_pcr': 'FECHA_RESULTADO_PCR',
+    'resultado_histopatologia': 'RESULTADO_HISTOPATOLOGIA',
+    'fecha_resultado_histopatologia': 'FECHA_RESULTADO_HISTOPATOLOGIA'
+}
+
 def procesar_epizootias(archivo_excel):
     """
     Procesa epizootias desde Excel con mapeo veredal completo
+    CORREGIDO: Contexto municipal para búsqueda veredal, sin campos calculados
     """
     print("🐒 PROCESANDO EPIZOOTIAS")
     print("=" * 30)
@@ -42,13 +64,13 @@ def procesar_epizootias(archivo_excel):
         print(f"📊 Registros iniciales: {len(df):,}")
         print(f"📋 Columnas originales: {list(df.columns)}")
         
-        # 2. MAPEAR COLUMNAS USANDO CONFIGURACIÓN CENTRALIZADA
+        # 2. MAPEAR COLUMNAS USANDO MAPEO LOCAL ESPECÍFICO
         print("🔄 Mapeando columnas...")
         
         columnas_mapeadas = {}
         columnas_no_encontradas = []
         
-        # Usar mapeo corregido desde config (nombre_bd: nombre_excel)
+        # Usar mapeo local específico para epizootias
         for nombre_bd, nombre_excel in MAPEO_EPIZOOTIAS_EXCEL.items():
             if nombre_excel in df.columns:
                 columnas_mapeadas[nombre_excel] = nombre_bd
@@ -146,8 +168,8 @@ def procesar_epizootias(archivo_excel):
             if coords_invalidas > 0:
                 print(f"   ⚠️ Coordenadas inválidas: {coords_invalidas:,}")
         
-        # 6. ASIGNAR CÓDIGOS DIVIPOLA
-        print("🗺️ Asignando códigos DIVIPOLA...")
+        # 6. ASIGNAR CÓDIGOS DIVIPOLA CON CONTEXTO MUNICIPAL
+        print("🗺️ Asignando códigos DIVIPOLA con contexto municipal...")
         
         # Asignar código municipal
         if 'municipio' in df.columns:
@@ -155,24 +177,43 @@ def procesar_epizootias(archivo_excel):
             codigos_municipales = df['codigo_municipio'].notna().sum()
             print(f"   Códigos municipales: {codigos_municipales:,}")
         
-        # Asignar código veredal (CLAVE PRINCIPAL)
-        if 'vereda' in df.columns:
-            def buscar_codigo_vereda_epizooti(vereda, municipio_ctx=None):
-                """Busca código veredal usando contexto municipal"""
+        # CORREGIDO: Asignar código veredal CON CONTEXTO MUNICIPAL
+        if 'vereda' in df.columns and 'municipio' in df.columns:
+            print("   🗺️ Aplicando búsqueda veredal con contexto municipal...")
+            
+            def buscar_codigo_vereda_con_contexto(vereda, municipio_ctx):
+                """Busca código veredal usando contexto municipal (CORREGIDO)"""
                 if pd.isna(vereda):
                     return None
+                # Usar contexto municipal para reducir búsqueda
                 return buscar_codigo_vereda(vereda, municipio_ctx)
             
             # Aplicar búsqueda veredal con contexto municipal
             df['codigo_divipola_vereda'] = df.apply(
-                lambda row: buscar_codigo_vereda_epizooti(
+                lambda row: buscar_codigo_vereda_con_contexto(
                     row.get('vereda'),
-                    row.get('municipio')
+                    row.get('municipio')  # Usar municipio como contexto
                 ), axis=1
             )
             
             codigos_veredales = df['codigo_divipola_vereda'].notna().sum()
-            print(f"   ✅ Códigos veredales asignados: {codigos_veredales:,}")
+            print(f"   ✅ Códigos veredales con contexto municipal: {codigos_veredales:,}")
+            
+            # Mostrar estadísticas de mapeo por municipio
+            if codigos_veredales > 0:
+                mapeo_stats = df.groupby('municipio').agg({
+                    'vereda': 'count',
+                    'codigo_divipola_vereda': 'count'
+                }).rename(columns={
+                    'vereda': 'total_veredas',
+                    'codigo_divipola_vereda': 'veredas_mapeadas'
+                })
+                mapeo_stats['porcentaje_mapeo'] = (mapeo_stats['veredas_mapeadas'] / mapeo_stats['total_veredas'] * 100).round(1)
+                
+                print(f"   📊 Mapeo veredal por municipio:")
+                for municipio, row in mapeo_stats.head(10).iterrows():
+                    if pd.notna(municipio):
+                        print(f"     {municipio}: {row['veredas_mapeadas']}/{row['total_veredas']} ({row['porcentaje_mapeo']}%)")
         
         # 7. NORMALIZAR ESPECIES Y RESULTADOS
         print("🔬 Normalizando especies y resultados...")
@@ -230,24 +271,11 @@ def procesar_epizootias(archivo_excel):
         
         print(f"   Registros excluidos: {registros_iniciales - len(df):,}")
         
-        # 9. CAMPOS CALCULADOS AUTOMÁTICOS
-        print("⚙️ Generando campos calculados...")
+        # 9. MANTENER DATOS ORIGINALES (CORREGIDO - Sin campos calculados)
+        print("⚙️ Manteniendo datos originales...")
+        print("   ✅ No se generan campos calculados - datos originales preservados")
         
-        # Crear campo año desde fecha recolección
-        if 'fecha_recoleccion' in df.columns:
-            df['año_recoleccion'] = df['fecha_recoleccion'].dt.year
-        elif 'fecha_notificacion' in df.columns:
-            df['año_recoleccion'] = df['fecha_notificacion'].dt.year
-        
-        # Crear campo estado de laboratorio
-        df['estado_laboratorio'] = 'Pendiente'
-        if 'resultado_pcr' in df.columns:
-            df.loc[df['resultado_pcr'].notna(), 'estado_laboratorio'] = 'PCR Procesado'
-        
-        if 'resultado_histopatologia' in df.columns:
-            df.loc[df['resultado_histopatologia'].notna(), 'estado_laboratorio'] = 'Completo'
-        
-        # 10. ESTADÍSTICAS PRE-CARGA
+        # 10. ESTADÍSTICAS FINALES
         print(f"\n📊 ESTADÍSTICAS EPIZOOTIAS PROCESADAS:")
         print(f"   Total registros: {len(df):,}")
         
@@ -284,7 +312,13 @@ def procesar_epizootias(archivo_excel):
                 if positivos > 0:
                     print(f"   ⚠️ PCR Positivos: {positivos:,}")
         
+        # Mapeo veredal exitoso
+        if 'codigo_divipola_vereda' in df.columns:
+            veredas_mapeadas = df['codigo_divipola_vereda'].notna().sum()
+            print(f"   🗺️ Veredas con código DIVIPOLA: {veredas_mapeadas:,}")
+        
         print("✅ Procesamiento epizootias completado")
+        print("🗺️ Códigos veredales asignados con contexto municipal (CORREGIDO)")
         
         return df
         
@@ -409,7 +443,7 @@ def procesar_epizootias_completo(archivo_excel):
     """
     Proceso completo: Excel → Procesamiento → PostgreSQL
     """
-    print("🐒 PROCESAMIENTO COMPLETO EPIZOOTIAS")
+    print("🐒 PROCESAMIENTO COMPLETO EPIZOOTIAS V2.0")
     print("=" * 45)
     
     inicio = datetime.now()
@@ -444,10 +478,10 @@ def procesar_epizootias_completo(archivo_excel):
         if exito:
             print("🎉 ¡EPIZOOTIAS CARGADAS EXITOSAMENTE!")
             print(f"📊 {len(df_epizootias):,} registros procesados")
-            print("🗺️ Códigos veredales asignados cuando disponible")
+            print("🗺️ Códigos veredales con contexto municipal (CORREGIDO)")
             print("📍 Datos geoespaciales optimizados")
             print("🔬 Resultados laboratorio organizados")
-            print("📈 Listos para análisis de vigilancia")
+            print("📈 Datos originales preservados")
         else:
             print("⚠️ Procesamiento con errores en carga BD")
         
@@ -540,18 +574,19 @@ def generar_reporte_epizootias():
             
             # Análisis temporal si hay datos
             temporal = pd.read_sql(text("""
-                SELECT año_recoleccion, COUNT(*) as casos
+                SELECT EXTRACT(YEAR FROM fecha_recoleccion) as año, COUNT(*) as casos
                 FROM epizootias 
-                WHERE año_recoleccion IS NOT NULL
-                GROUP BY año_recoleccion 
-                ORDER BY año_recoleccion DESC
+                WHERE fecha_recoleccion IS NOT NULL
+                GROUP BY EXTRACT(YEAR FROM fecha_recoleccion)
+                ORDER BY año DESC
                 LIMIT 5
             """), conn)
             
             if len(temporal) > 0:
                 print(f"\n📅 DISTRIBUCIÓN TEMPORAL:")
                 for _, row in temporal.iterrows():
-                    print(f"   {row['año_recoleccion']}: {row['casos']} casos")
+                    if pd.notna(row['año']):
+                        print(f"   {int(row['año'])}: {row['casos']} casos")
         
         return True
         
@@ -563,7 +598,7 @@ def generar_reporte_epizootias():
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🐒 PROCESADOR EPIZOOTIAS")
+    print("🐒 PROCESADOR EPIZOOTIAS V2.0")
     print("=" * 30)
     
     # Archivo por defecto
