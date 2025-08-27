@@ -26,7 +26,7 @@ warnings.filterwarnings('ignore')
 
 def cargar_poblacion_sisben_sin_headers(archivo_csv):
     """
-    Carga CSV de población SISBEN sin headers (lógica original de poblacion.py)
+    Carga CSV de población SISBEN sin headers
     """
     print("👥 PROCESANDO POBLACIÓN SISBEN DESDE CSV SIN HEADERS")
     print("=" * 60)

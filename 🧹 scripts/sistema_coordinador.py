@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Sistema Coordinador Maestro - ACTUALIZADO
+Sistema Coordinador Maestro
 Orquesta actualizaciones completas del Sistema Epidemiológico Tolima
 Usa los scripts adaptados con configuración centralizada
 """
@@ -435,7 +435,7 @@ class SistemaCoordinadorTolima:
 
 def menu_interactivo():
     """Menú interactivo para el sistema coordinador"""
-    print("🎛️ SISTEMA COORDINADOR EPIDEMIOLÓGICO TOLIMA - V2.0")
+    print("🎛️ SISTEMA COORDINADOR EPIDEMIOLÓGICO TOLIMA")
     print("=" * 60)
     print("1. 🚀 Actualización completa del sistema")
     print("2. 🔍 Solo verificar archivos y conexiones")
@@ -503,7 +503,7 @@ def menu_interactivo():
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🎮 SISTEMA COORDINADOR TOLIMA - V2.0")
+    print("🎮 SISTEMA COORDINADOR TOLIMA")
     print("=" * 45)
     
     # Verificar argumentos de línea de comandos

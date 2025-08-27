@@ -21,7 +21,7 @@ try:
         clasificar_grupo_etario, limpiar_fecha_robusta,
         cargar_codigos_divipola_desde_gpkg, validar_configuracion
     )
-    print("✅ Configuración centralizada V2.0 importada correctamente")
+    print("✅ Configuración centralizada importada correctamente")
 except ImportError as e:
     print(f"❌ Error importando config.py: {e}")
     print("💡 Asegúrate de que config.py esté en el directorio actual")
@@ -29,7 +29,7 @@ except ImportError as e:
 
 def test_postgresql_connection():
     """Prueba la conexión a PostgreSQL usando configuración centralizada"""
-    print("🐘 Probando conexión a PostgreSQL V2.0...")
+    print("🐘 Probando conexión a PostgreSQL...")
     
     try:
         # 1. Probar conexión básica usando config centralizada
@@ -123,7 +123,7 @@ def test_postgresql_connection():
 
 def test_configuracion_centralizada():
     """Prueba las funciones de configuración centralizada"""
-    print("\n⚙️ PROBANDO CONFIGURACIÓN CENTRALIZADA V2.0...")
+    print("\n⚙️ PROBANDO CONFIGURACIÓN CENTRALIZADA...")
     
     try:
         # 1. Verificar estructura de directorios
@@ -189,8 +189,8 @@ def test_configuracion_centralizada():
         return False
 
 def test_sample_data_insert():
-    """Prueba insertar datos de muestra V2.0"""
-    print("\n🧪 PROBANDO INSERCIÓN DE DATOS DE MUESTRA V2.0...")
+    """Prueba insertar datos de muestra"""
+    print("\n🧪 PROBANDO INSERCIÓN DE DATOS DE MUESTRA...")
     
     try:
         engine = create_engine(DATABASE_URL)
@@ -207,7 +207,7 @@ def test_sample_data_insert():
                     print(f"   ⚠️ Tabla {tabla}: no existe (crear con scripts SQL)")
                     return False
         
-        # Datos de muestra usando configuración V2.0
+        # Datos de muestra usando configuración
         sample_territorio = pd.DataFrame([{
             'tipo': 'municipio',
             'codigo_divipola': '73001',

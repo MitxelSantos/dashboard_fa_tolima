@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-cargar_vacunacion.py - PAIweb → PostgreSQL (Adaptado)
-Procesamiento de datos de vacunación con cálculo correcto de edad usando FechaNacimiento
+cargar_vacunacion.py - PAIweb → PostgreSQL
+Procesamiento de datos de vacunación
 Solo columnas necesarias, datos completamente anónimos
 """
 
@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 def procesar_paiweb_vacunacion(archivo_excel):
     """
     Procesa datos de vacunación PAIweb ELIMINANDO datos personales
-    Usa FechaNacimiento para cálculo correcto de edad
+    Usa FechaNacimiento para cálculo de edad
     """
     print("💉 PROCESANDO VACUNACIÓN PAIweb → POSTGRESQL")
     print("=" * 55)
@@ -93,7 +93,7 @@ def procesar_paiweb_vacunacion(archivo_excel):
             print("❌ ERROR CRÍTICO: No se encontró columna FechaNacimiento")
             return None
         
-        # 4. CALCULAR EDAD CORRECTAMENTE USANDO FECHA DE NACIMIENTO
+        # 4. CALCULAR EDAD USANDO FECHA DE NACIMIENTO
         print("🔢 Calculando edad desde fecha de nacimiento...")
         
         fecha_referencia = date.today()

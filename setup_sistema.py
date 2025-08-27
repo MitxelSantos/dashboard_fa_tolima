@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-setup_sistema.py - Instalación Automática Sistema Epidemiológico Tolima V2.0
-Script actualizado que usa configuración centralizada
+setup_sistema.py - Instalación Automática Sistema Epidemiológico Tolima V1.0
 """
 
 import os
@@ -15,7 +14,7 @@ from datetime import datetime
 import urllib.request
 import zipfile
 
-class SistemaInstallerV2:
+class SistemaInstaller:
     def __init__(self):
         self.base_dir = Path.cwd()
         self.logs = []
@@ -72,7 +71,7 @@ class SistemaInstallerV2:
     
     def crear_estructura_proyecto(self):
         """Crea estructura de directorios del proyecto"""
-        self.log("📁 Creando estructura de proyecto V2.0...")
+        self.log("📁 Creando estructura de proyecto...")
         
         directorios = [
             "sql_init",
@@ -96,10 +95,10 @@ class SistemaInstallerV2:
     
     def instalar_dependencias_python(self):
         """Instala dependencias Python actualizadas"""
-        self.log("📦 Instalando dependencias Python V2.0...")
+        self.log("📦 Instalando dependencias Python...")
         
-        # Requirements actualizado para V2.0
-        requirements_content = """# Sistema Epidemiológico Tolima V2.0 - Dependencias
+        # Requirements
+        requirements_content = """# Sistema Epidemiológico Tolima V1.0 - Dependencias
 # Base de datos y conectividad
 psycopg2-binary==2.9.7
 SQLAlchemy==2.0.21
@@ -145,7 +144,7 @@ fpdf==2.7.4
         requirements_file = self.base_dir / "requirements.txt"
         with open(requirements_file, 'w', encoding='utf-8') as f:
             f.write(requirements_content)
-        self.log("✅ requirements.txt V2.0 creado")
+        self.log("✅ requirements.txt V1.0 creado")
         
         try:
             # Instalar dependencias
@@ -169,8 +168,8 @@ fpdf==2.7.4
             return False
     
     def crear_archivo_configuracion_v2(self):
-        """Crea archivo de configuración centralizada V2.0"""
-        self.log("⚙️ Creando configuración centralizada V2.0...")
+        """Crea archivo de configuración centralizada V1.0"""
+        self.log("⚙️ Creando configuración centralizada V1.0...")
         
         config_content = '''#!/usr/bin/env python
 # -*- coding: utf-8 -*-
