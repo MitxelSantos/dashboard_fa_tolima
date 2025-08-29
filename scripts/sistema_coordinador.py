@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, text
 import warnings
 
 # Importar configuración centralizada
-from config import (
+from scripts.config import (
     DATABASE_URL, FileConfig, validar_configuracion,
     cargar_codigos_divipola_desde_gpkg
 )

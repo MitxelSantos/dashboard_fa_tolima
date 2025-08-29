@@ -1,41 +1,42 @@
-# Requirements.txt - Sistema Epidemiológico Tolima
-# Dependencias completas para el proyecto
+# requirements-minimal.txt
+# Dependencias MÍNIMAS para Sistema Epidemiológico Tolima V2.0
+# Solo lo esencial para que funcione el sistema básico
 
-# Base de datos y conectividad
-psycopg2-binary==2.9.7
-SQLAlchemy==2.0.21
-geoalchemy2==0.14.1
+# =====================================
+# CORE - ABSOLUTAMENTE NECESARIO
+# =====================================
+pandas==2.2.0                  # Procesamiento de datos
+numpy==1.26.3                  # Operaciones numéricas  
+psycopg2-binary==2.9.9         # PostgreSQL
+sqlalchemy==2.0.25             # ORM base de datos
 
-# Procesamiento de datos
-pandas==2.1.1
-numpy==1.25.2
-openpyxl==3.1.2         # Para archivos Excel
-xlrd==2.0.1             # Para archivos Excel legacy
+# =====================================
+# ARCHIVOS Y FORMATOS
+# =====================================
+openpyxl==3.1.2                # Excel files
+python-dotenv==1.0.1           # Variables .env
+python-dateutil==2.8.2         # Parsing fechas
 
-# Datos geoespaciales
-geopandas==0.13.2
-Shapely==2.0.1
-Fiona==1.9.4
-pyproj==3.6.0
+# =====================================
+# GEOESPACIAL BÁSICO
+# =====================================
+geopandas==0.14.3              # Datos geoespaciales
+shapely==2.0.2                 # Geometrías
+fiona==1.9.5                   # I/O geoespacial
 
-# Dashboard y visualización
-streamlit==1.26.0
-plotly==5.16.1
-folium==0.14.0
-streamlit-folium==0.15.0
-matplotlib==3.7.2
-seaborn==0.12.2
+# =====================================
+# UTILIDADES ESENCIALES
+# =====================================
+tqdm==4.66.2                   # Progress bars
+schedule==1.2.0                # Tareas programadas
+jinja2==3.1.3                  # Templates HTML
 
-# Utilidades adicionales
-python-dotenv==1.0.0    # Para variables de entorno
-schedule==1.2.0         # Para tareas programadas
-tqdm==4.66.1            # Barras de progreso
+# =====================================
+# TOTAL: 11 dependencias core
+# =====================================
 
-# Desarrollo y testing (opcional)
-pytest==7.4.2
-black==23.7.0           # Formateo de código
-flake8==6.0.0           # Linting
+# INSTALACIÓN RÁPIDA:
+# pip install -r requirements-minimal.txt
 
-# Exportación de reportes
-jinja2==3.1.2           # Templates HTML
-fpdf2==2.7.9            # PDFs - versión corregida y actual
+# Para instalar SOLO lo mínimo sin dependencias opcionales:
+# pip install --no-deps pandas numpy psycopg2-binary sqlalchemy openpyxl python-dotenv geopandas

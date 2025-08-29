@@ -16,7 +16,7 @@ import warnings
 import os
 
 # Importar configuración centralizada
-from config import (
+from scripts.config import (
     DATABASE_URL, FileConfig, obtener_grupos_etarios_definidos,
     cargar_codigos_divipola_desde_gpkg
 )

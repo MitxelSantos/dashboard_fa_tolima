@@ -16,7 +16,7 @@ import warnings
 from sqlalchemy import create_engine, text
 
 # Importar configuración centralizada
-from config import (
+from scripts.config import (
     DATABASE_URL, MAPEO_MUNICIPIOS_ESPECIALES,
     clasificar_grupo_etario, calcular_edad_en_meses,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,
