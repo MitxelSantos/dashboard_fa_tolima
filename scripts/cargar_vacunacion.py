@@ -15,6 +15,11 @@ import os
 import warnings
 from sqlalchemy import create_engine, text
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Importar configuración centralizada
 from config import (
     DATABASE_URL, MAPEO_MUNICIPIOS_ESPECIALES,

@@ -14,6 +14,11 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Importar configuración centralizada
 from config import (
     DATABASE_URL, FileConfig, validar_configuracion,
