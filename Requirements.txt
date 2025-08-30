@@ -5,31 +5,31 @@
 # =====================================
 # CORE - ABSOLUTAMENTE NECESARIO
 # =====================================
-pandas==2.2.0                  # Procesamiento de datos
-numpy==1.26.3                  # Operaciones numéricas  
-psycopg2-binary==2.9.9         # PostgreSQL
-sqlalchemy==2.0.25             # ORM base de datos
+pandas>=2.2.0                  # Procesamiento de datos
+numpy>=1.26.3                  # Operaciones numéricas  
+psycopg2-binary>=2.9.9         # PostgreSQL
+sqlalchemy>=2.0.25             # ORM base de datos
 
 # =====================================
 # ARCHIVOS Y FORMATOS
 # =====================================
-openpyxl==3.1.2                # Excel files
-python-dotenv==1.0.1           # Variables .env
-python-dateutil==2.8.2         # Parsing fechas
+openpyxl>=3.1.2                # Excel files
+python-dotenv>=1.0.1           # Variables .env
+python-dateutil>=2.8.2         # Parsing fechas
 
 # =====================================
 # GEOESPACIAL BÁSICO
 # =====================================
-geopandas==0.14.3              # Datos geoespaciales
-shapely==2.0.2                 # Geometrías
-fiona==1.9.5                   # I/O geoespacial
+geopandas>=0.14.3              # Datos geoespaciales
+shapely>=2.0.2                 # Geometrías
+fiona>=1.9.5                   # I/O geoespacial
 
 # =====================================
 # UTILIDADES ESENCIALES
 # =====================================
-tqdm==4.66.2                   # Progress bars
-schedule==1.2.0                # Tareas programadas
-jinja2==3.1.3                  # Templates HTML
+tqdm>=4.66.2                   # Progress bars
+schedule>=1.2.0                # Tareas programadas
+jinja2>=3.1.3                  # Templates HTML
 
 # =====================================
 # TOTAL: 11 dependencias core

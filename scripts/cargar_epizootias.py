@@ -14,7 +14,7 @@ import warnings
 import os
 
 # Importar configuración centralizada
-from scripts.config import (
+from config import (
     DATABASE_URL,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,
     buscar_codigo_vereda, buscar_codigo_municipio,

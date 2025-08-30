@@ -11,7 +11,7 @@ __author__ = "Sistema Epidemiológico Tolima"
 __description__ = "Sistema de vigilancia epidemiológica con configuración centralizada"
 
 # Importaciones principales para uso externo
-from scripts.config import (
+from config import (
     DATABASE_URL,
     FileConfig,
     DatabaseConfig,

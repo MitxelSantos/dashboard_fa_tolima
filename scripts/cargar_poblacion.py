@@ -15,7 +15,7 @@ import os
 import sys
 
 # Importar configuración centralizada
-from scripts.config import (
+from config import (
     DATABASE_URL,
     clasificar_grupo_etario, calcular_edad_en_meses, 
     determinar_ubicacion_urbano_rural, limpiar_fecha_robusta,

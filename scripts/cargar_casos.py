@@ -15,7 +15,7 @@ import warnings
 import os
 
 # Importar configuración centralizada
-from scripts.config import (
+from config import (
     DATABASE_URL,
     clasificar_grupo_etario, calcular_edad_en_meses,
     limpiar_fecha_robusta, cargar_primera_hoja_excel,

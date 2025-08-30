@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 # Importar configuración centralizada
 try:
-    from scripts.config import (
+    from config import (
         DATABASE_URL, FileConfig, DatabaseConfig,
         clasificar_grupo_etario, limpiar_fecha_robusta,
         cargar_codigos_divipola_desde_gpkg, validar_configuracion,
