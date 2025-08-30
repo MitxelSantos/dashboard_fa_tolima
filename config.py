@@ -90,7 +90,7 @@ class DatabaseConfig:
     DEFAULT_PORT = "5432"
     DEFAULT_DATABASE = "epidemiologia_tolima"
     DEFAULT_USER = "tolima_admin"
-    DEFAULT_PASSWORD = "tolima2025!"
+    DEFAULT_PASSWORD = "tolima2025"
 
     HOST = os.getenv("DB_HOST", DEFAULT_HOST)
     PORT = os.getenv("DB_PORT", DEFAULT_PORT)

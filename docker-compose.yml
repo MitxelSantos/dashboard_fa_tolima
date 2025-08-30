@@ -4,13 +4,13 @@
 
 services:
   postgres:
-    image: postgres:15-alpine # <-- CAMBIAR ESTA LÍNEA
+    image: postgis/postgis:15-3.3
     container_name: tolima_postgres
     environment:
       POSTGRES_DB: epidemiologia_tolima
       POSTGRES_USER: tolima_admin
       POSTGRES_PASSWORD: tolima2025
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C" # <-- AGREGAR ESTA LÍNEA
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
