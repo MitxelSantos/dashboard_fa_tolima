@@ -1,7 +1,3 @@
-# docker-compose.yml
-# PostgreSQL + PostGIS para Sistema Epidemiológico Tolima
-# VERSION CORREGIDA - Sin version obsoleta + pgAdmin opcional
-
 services:
   postgres:
     image: postgis/postgis:15-3.3
@@ -10,7 +6,11 @@ services:
       POSTGRES_DB: epidemiologia_tolima
       POSTGRES_USER: tolima_admin
       POSTGRES_PASSWORD: tolima2025
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+      # Forzar UTF-8 en todo
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+      LC_ALL: en_US.UTF-8
+      LANG: en_US.UTF-8
+      LANGUAGE: en_US.UTF-8
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
@@ -18,25 +18,16 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./backups:/backups
     restart: unless-stopped
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U tolima_admin -d epidemiologia_tolima" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-  # Herramienta de administración web (COMENTADA TEMPORALMENTE)
-  # pgadmin:
-  #   image: dpage/pgadmin4
-  #   container_name: tolima_pgadmin
-  #   environment:
-  #     PGADMIN_DEFAULT_EMAIL: admin@tolima.gov.co
-  #     PGADMIN_DEFAULT_PASSWORD: admin123
-  #     PGADMIN_CONFIG_SERVER_MODE: 'False'
-  #   ports:
-  #     - "8080:80"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   restart: unless-stopped
+    command: >
+      postgres
+      -c listen_addresses='*'
+      -c log_statement=none
+      -c log_min_messages=warning
+      -c lc_messages='en_US.UTF-8'
+      -c lc_monetary='en_US.UTF-8'
+      -c lc_numeric='en_US.UTF-8'
+      -c lc_time='en_US.UTF-8'
+      -c default_text_search_config='pg_catalog.english'
 
 volumes:
   postgres_data:

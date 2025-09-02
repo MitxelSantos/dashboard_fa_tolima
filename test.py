@@ -9,7 +9,7 @@ try:
         port=5432,
         database="epidemiologia_tolima",
         user="tolima_admin",
-        password="admin123",
+        password="tolima2025",
     )
 
     print("✅ CONEXIÓN EXITOSA!")

@@ -92,7 +92,7 @@ class SistemaVerificadorTolima:
             'DB_PORT': '5432',
             'DB_NAME': 'epidemiologia_tolima',
             'DB_USER': 'tolima_admin',
-            'DB_PASSWORD': 'tolima2025!',
+            'DB_PASSWORD': 'tolima2025',
             'CACHE_TTL': '3600',
             'LOG_LEVEL': 'INFO',
             'SYSTEM_VERSION': '2.0'
