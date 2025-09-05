@@ -100,7 +100,7 @@ class DatabaseConfig:
 
     @classmethod
     def get_connection_url(cls):
-        return f"postgresql://{cls.USER}:{cls.PASSWORD}@{cls.HOST}:{cls.PORT}/{cls.DATABASE}"
+        return f"postgresql://{cls.USER}@{cls.HOST}:{cls.PORT}/{cls.DATABASE}"postgresql://{cls.USER}:{cls.PASSWORD}@{cls.HOST}:{cls.PORT}/{cls.DATABASE}"
 
 
 # ================================
