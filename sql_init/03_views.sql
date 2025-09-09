@@ -1,334 +1,475 @@
--- 03_views.sql
--- Vistas optimizadas para Dashboard Sistema Epidemiológico Tolima
+-- 03_views_optimized.sql
+-- Vistas SQL OPTIMIZADAS para Dashboard Sistema Epidemiológico Tolima
+-- PERFORMANCE CRÍTICO: Consultas <2s, índices optimizados, vistas materializadas
 
-\echo 'Creando vistas optimizadas para dashboard...'
+\echo 'Creando vistas optimizadas para dashboard de alto rendimiento...'
 
 -- =====================================================
--- 1. VISTA PRINCIPAL: Coberturas de Vacunación
+-- 1. VISTA MATERIALIZADA: Dashboard Principal (CRÍTICA)
 -- =====================================================
-CREATE VIEW v_coberturas_dashboard AS
+
+-- Eliminar vista materializada si existe
+DROP MATERIALIZED VIEW IF EXISTS mv_dashboard_principal CASCADE;
+
+CREATE MATERIALIZED VIEW mv_dashboard_principal AS
 SELECT 
     v.codigo_municipio,
     v.municipio,
-    ut.region,
+    COALESCE(ut.region, 'SIN REGION') as region,
     v.tipo_ubicacion,
     v.grupo_etario,
-    v.año,
-    v.mes,
-    v.institucion,
     
-    -- Métricas principales
-    COUNT(*) as vacunados,
+    -- Métricas de vacunación
+    COUNT(*) as total_vacunados,
+    COUNT(DISTINCT v.institucion) as instituciones_activas,
+    MIN(v.fecha_aplicacion) as primera_vacuna,
+    MAX(v.fecha_aplicacion) as ultima_vacuna,
+    
+    -- Métricas poblacionales
     COALESCE(p.poblacion_total, 0) as poblacion_total,
+    
+    -- Cobertura optimizada
     CASE 
         WHEN COALESCE(p.poblacion_total, 0) > 0 
         THEN ROUND(COUNT(*) * 100.0 / p.poblacion_total, 2)
         ELSE 0 
     END as cobertura_porcentaje,
     
-    -- Métricas adicionales
-    COUNT(DISTINCT v.institucion) as instituciones_activas,
-    ROUND(AVG(v.edad_anos), 1) as edad_promedio,
-    MIN(v.fecha_aplicacion) as primera_vacuna,
-    MAX(v.fecha_aplicacion) as ultima_vacuna,
+    -- Clasificación de cobertura
+    CASE 
+        WHEN COALESCE(p.poblacion_total, 0) = 0 THEN 'SIN_DATOS'
+        WHEN COUNT(*) * 100.0 / p.poblacion_total >= 95 THEN 'EXCELENTE'
+        WHEN COUNT(*) * 100.0 / p.poblacion_total >= 85 THEN 'BUENA'
+        WHEN COUNT(*) * 100.0 / p.poblacion_total >= 70 THEN 'REGULAR'
+        WHEN COUNT(*) * 100.0 / p.poblacion_total >= 50 THEN 'BAJA'
+        ELSE 'CRITICA'
+    END as categoria_cobertura,
     
-    -- Para filtros temporales
-    CONCAT(v.año, '-', LPAD(v.mes::text, 2, '0')) as periodo_mes
+    -- Métricas temporales
+    EXTRACT(YEAR FROM v.fecha_aplicacion) as año,
+    EXTRACT(MONTH FROM v.fecha_aplicacion) as mes,
+    
+    -- Timestamp de actualización
+    NOW() as actualizado_en
 
 FROM vacunacion_fiebre_amarilla v
-JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
+LEFT JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
 LEFT JOIN poblacion p ON (
     v.codigo_municipio = p.codigo_municipio AND
     v.grupo_etario = p.grupo_etario AND
     v.tipo_ubicacion = p.tipo_ubicacion
 )
-WHERE ut.tipo = 'municipio'
+WHERE v.fecha_aplicacion IS NOT NULL
 GROUP BY 
     v.codigo_municipio, v.municipio, ut.region, v.tipo_ubicacion, 
-    v.grupo_etario, v.año, v.mes, v.institucion, p.poblacion_total
-ORDER BY v.municipio, v.año, v.mes, v.grupo_etario;
+    v.grupo_etario, p.poblacion_total,
+    EXTRACT(YEAR FROM v.fecha_aplicacion),
+    EXTRACT(MONTH FROM v.fecha_aplicacion)
+ORDER BY v.municipio, v.grupo_etario;
 
-\echo 'Vista v_coberturas_dashboard creada'
+-- Índices optimizados para vista materializada
+CREATE INDEX idx_mv_dashboard_cobertura ON mv_dashboard_principal(categoria_cobertura, region);
+CREATE INDEX idx_mv_dashboard_municipio ON mv_dashboard_principal(codigo_municipio, grupo_etario);
+CREATE INDEX idx_mv_dashboard_temporal ON mv_dashboard_principal(año, mes);
+
+\echo 'Vista materializada mv_dashboard_principal creada con índices optimizados'
 
 -- =====================================================
--- 2. VISTA MAPA: Coberturas por Municipio Agregadas
+-- 2. VISTA RÁPIDA: Indicadores Clave Tiempo Real
 -- =====================================================
-CREATE VIEW v_mapa_coberturas AS
+
+CREATE OR REPLACE VIEW v_indicadores_tiempo_real AS
 SELECT 
-    v.codigo_municipio,
-    v.municipio,
-    ut.region,
-    ut.geometria,
+    -- Métricas principales
+    (SELECT COUNT(*) FROM vacunacion_fiebre_amarilla) as total_vacunados,
+    (SELECT COUNT(DISTINCT codigo_municipio) FROM vacunacion_fiebre_amarilla) as municipios_activos,
+    (SELECT COUNT(DISTINCT institucion) FROM vacunacion_fiebre_amarilla) as instituciones_activas,
     
-    -- Totales generales
-    COUNT(*) as total_vacunados,
-    COALESCE(SUM(p.poblacion_total), 0) as poblacion_total,
-    CASE 
-        WHEN COALESCE(SUM(p.poblacion_total), 0) > 0 
-        THEN ROUND(COUNT(*) * 100.0 / SUM(p.poblacion_total), 2)
-        ELSE 0 
-    END as cobertura_general,
+    -- Población y cobertura
+    (SELECT COALESCE(SUM(poblacion_total), 0) FROM poblacion) as poblacion_total,
+    ROUND(
+        (SELECT COUNT(*) FROM vacunacion_fiebre_amarilla) * 100.0 / 
+        NULLIF((SELECT SUM(poblacion_total) FROM poblacion), 0), 2
+    ) as cobertura_general,
     
-    -- Por ubicación
-    COUNT(CASE WHEN v.tipo_ubicacion = 'Urbano' THEN 1 END) as vacunados_urbano,
-    COUNT(CASE WHEN v.tipo_ubicacion = 'Rural' THEN 1 END) as vacunados_rural,
+    -- Actividad reciente (últimos 30 días)
+    (SELECT COUNT(*) 
+     FROM vacunacion_fiebre_amarilla 
+     WHERE fecha_aplicacion >= CURRENT_DATE - INTERVAL '30 days') as vacunados_ultimos_30d,
     
-    -- Por grupo etario
-    COUNT(CASE WHEN v.grupo_etario = 'Menor de 9 meses' THEN 1 END) as vacunados_menores_9m,
-    COUNT(CASE WHEN v.grupo_etario = '09-23 meses' THEN 1 END) as vacunados_9_23m,
-    COUNT(CASE WHEN v.grupo_etario = '02-19 años' THEN 1 END) as vacunados_2_19a,
-    COUNT(CASE WHEN v.grupo_etario = '20-59 años' THEN 1 END) as vacunados_20_59a,
-    COUNT(CASE WHEN v.grupo_etario = '60+ años' THEN 1 END) as vacunados_60mas,
+    -- Última actividad
+    (SELECT MAX(fecha_aplicacion) FROM vacunacion_fiebre_amarilla) as ultima_vacunacion,
     
-    -- Temporal
-    MIN(v.fecha_aplicacion) as primera_vacuna_municipio,
-    MAX(v.fecha_aplicacion) as ultima_vacuna_municipio,
-    COUNT(DISTINCT v.institucion) as instituciones_total
+    -- Distribución urbano/rural
+    (SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE tipo_ubicacion = 'Urbano') as vacunados_urbano,
+    (SELECT COUNT(*) FROM vacunacion_fiebre_amarilla WHERE tipo_ubicacion = 'Rural') as vacunados_rural,
+    
+    -- Casos epidemiológicos
+    (SELECT COUNT(*) FROM casos_fiebre_amarilla) as total_casos,
+    (SELECT COUNT(*) FROM epizootias) as total_epizootias,
+    
+    -- Timestamp
+    NOW() as consultado_en;
 
-FROM vacunacion_fiebre_amarilla v
-JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
-LEFT JOIN poblacion p ON (
-    v.codigo_municipio = p.codigo_municipio AND
-    v.grupo_etario = p.grupo_etario AND
-    v.tipo_ubicacion = p.tipo_ubicacion
-)
-WHERE ut.tipo = 'municipio'
-GROUP BY v.codigo_municipio, v.municipio, ut.region, ut.geometria
-ORDER BY cobertura_general DESC;
-
-\echo 'Vista v_mapa_coberturas creada'
+\echo 'Vista v_indicadores_tiempo_real creada'
 
 -- =====================================================
--- 3. VISTA ANÁLISIS: Rendimiento por Institución
+-- 3. VISTA OPTIMIZADA: Mapa Geográfico
 -- =====================================================
-CREATE VIEW v_instituciones_rendimiento AS
+
+CREATE OR REPLACE VIEW v_mapa_optimizado AS
 SELECT 
-    v.institucion,
-    v.municipio,
-    ut.region,
-    v.tipo_ubicacion,
-    v.año,
+    m.codigo_municipio,
+    m.municipio,
+    m.region,
+    m.total_vacunados,
+    m.poblacion_total,
+    m.cobertura_porcentaje,
+    m.categoria_cobertura,
     
-    -- Métricas de rendimiento
-    COUNT(*) as vacunas_aplicadas,
-    COUNT(DISTINCT v.codigo_municipio) as municipios_atendidos,
-    COUNT(DISTINCT CONCAT(v.año, '-', v.mes)) as meses_activos,
+    -- Distribución por ubicación
+    SUM(CASE WHEN m.tipo_ubicacion = 'Urbano' THEN m.total_vacunados ELSE 0 END) as vacunados_urbano,
+    SUM(CASE WHEN m.tipo_ubicacion = 'Rural' THEN m.total_vacunados ELSE 0 END) as vacunados_rural,
     
     -- Distribución por grupo etario
-    COUNT(CASE WHEN v.grupo_etario = 'Menor de 9 meses' THEN 1 END) as menores_9m,
-    COUNT(CASE WHEN v.grupo_etario = '09-23 meses' THEN 1 END) as entre_9_23m,
-    COUNT(CASE WHEN v.grupo_etario = '02-19 años' THEN 1 END) as entre_2_19a,
-    COUNT(CASE WHEN v.grupo_etario = '20-59 años' THEN 1 END) as entre_20_59a,
-    COUNT(CASE WHEN v.grupo_etario = '60+ años' THEN 1 END) as mayores_60a,
+    SUM(CASE WHEN m.grupo_etario = '09-23 meses' THEN m.total_vacunados ELSE 0 END) as vacunados_9_23m,
+    SUM(CASE WHEN m.grupo_etario = '02-19 años' THEN m.total_vacunados ELSE 0 END) as vacunados_2_19a,
+    SUM(CASE WHEN m.grupo_etario = '20-59 años' THEN m.total_vacunados ELSE 0 END) as vacunados_20_59a,
+    SUM(CASE WHEN m.grupo_etario = '60+ años' THEN m.total_vacunados ELSE 0 END) as vacunados_60mas,
     
-    -- Temporal
+    -- Actividad temporal
+    MIN(m.primera_vacuna) as primera_vacuna_municipio,
+    MAX(m.ultima_vacuna) as ultima_vacuna_municipio,
+    
+    -- Geometría para mapa
+    ut.geometria,
+    
+    -- Cobertura agregada por municipio
+    ROUND(
+        SUM(m.total_vacunados) * 100.0 / NULLIF(SUM(m.poblacion_total), 0), 2
+    ) as cobertura_municipal_agregada
+
+FROM mv_dashboard_principal m
+LEFT JOIN unidades_territoriales ut ON m.codigo_municipio = ut.codigo_divipola
+WHERE ut.tipo = 'municipio'
+GROUP BY 
+    m.codigo_municipio, m.municipio, m.region,
+    m.total_vacunados, m.poblacion_total, m.cobertura_porcentaje, m.categoria_cobertura,
+    ut.geometria
+ORDER BY cobertura_municipal_agregada DESC;
+
+\echo 'Vista v_mapa_optimizado creada'
+
+-- =====================================================
+-- 4. VISTA TEMPORAL: Tendencias Optimizada
+-- =====================================================
+
+CREATE OR REPLACE VIEW v_tendencias_optimizada AS
+WITH tendencias_base AS (
+    SELECT 
+        año,
+        mes,
+        region,
+        tipo_ubicacion,
+        grupo_etario,
+        SUM(total_vacunados) as vacunados_periodo,
+        SUM(poblacion_total) as poblacion_periodo,
+        COUNT(DISTINCT codigo_municipio) as municipios_activos
+    FROM mv_dashboard_principal
+    GROUP BY año, mes, region, tipo_ubicacion, grupo_etario
+),
+tendencias_con_ventana AS (
+    SELECT 
+        *,
+        -- Promedio móvil 3 meses
+        AVG(vacunados_periodo) OVER (
+            PARTITION BY region, tipo_ubicacion, grupo_etario 
+            ORDER BY año, mes 
+            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        ) as promedio_movil_3m,
+        
+        -- Crecimiento mensual
+        LAG(vacunados_periodo) OVER (
+            PARTITION BY region, tipo_ubicacion, grupo_etario 
+            ORDER BY año, mes
+        ) as vacunados_mes_anterior,
+        
+        -- Acumulado
+        SUM(vacunados_periodo) OVER (
+            PARTITION BY region, tipo_ubicacion, grupo_etario 
+            ORDER BY año, mes
+        ) as vacunados_acumulado
+    FROM tendencias_base
+)
+SELECT 
+    *,
+    -- Cobertura periodo
+    ROUND(vacunados_periodo * 100.0 / NULLIF(poblacion_periodo, 0), 2) as cobertura_periodo,
+    
+    -- Crecimiento porcentual
+    CASE 
+        WHEN vacunados_mes_anterior > 0 
+        THEN ROUND((vacunados_periodo - vacunados_mes_anterior) * 100.0 / vacunados_mes_anterior, 1)
+        ELSE NULL 
+    END as crecimiento_porcentual,
+    
+    -- Período formateado
+    CONCAT(año, '-', LPAD(mes::text, 2, '0')) as periodo_formato
+
+FROM tendencias_con_ventana
+ORDER BY año DESC, mes DESC, region, tipo_ubicacion, grupo_etario;
+
+\echo 'Vista v_tendencias_optimizada creada'
+
+-- =====================================================
+-- 5. VISTA ALERTAS: Dashboard de Alertas
+-- =====================================================
+
+CREATE OR REPLACE VIEW v_alertas_dashboard AS
+SELECT 
+    'COBERTURA_BAJA' as tipo_alerta,
+    'CRÍTICA' as severidad,
+    municipio,
+    region,
+    CONCAT('Cobertura ', cobertura_porcentaje, '% en ', municipio) as mensaje,
+    codigo_municipio,
+    cobertura_porcentaje as valor_metrica,
+    'cobertura_critica' as categoria,
+    NOW() as generada_en
+FROM mv_dashboard_principal
+WHERE categoria_cobertura IN ('CRITICA', 'BAJA')
+  AND poblacion_total > 500  -- Solo municipios significativos
+
+UNION ALL
+
+SELECT 
+    'INACTIVIDAD_INSTITUCIONAL' as tipo_alerta,
+    'ALTA' as severidad,
+    municipio,
+    region,
+    CONCAT('Sin actividad en ', municipio, ' últimos 30 días') as mensaje,
+    codigo_municipio,
+    EXTRACT(DAYS FROM NOW() - ultima_vacuna) as valor_metrica,
+    'inactividad' as categoria,
+    NOW() as generada_en
+FROM mv_dashboard_principal
+WHERE ultima_vacuna < CURRENT_DATE - INTERVAL '30 days'
+  AND poblacion_total > 1000
+
+UNION ALL
+
+SELECT 
+    'MUNICIPIO_SIN_DATOS' as tipo_alerta,
+    'MEDIA' as severidad,
+    ut.nombre as municipio,
+    ut.region,
+    CONCAT('Municipio ', ut.nombre, ' sin datos de vacunación') as mensaje,
+    ut.codigo_divipola as codigo_municipio,
+    0 as valor_metrica,
+    'sin_datos' as categoria,
+    NOW() as generada_en
+FROM unidades_territoriales ut
+LEFT JOIN mv_dashboard_principal m ON ut.codigo_divipola = m.codigo_municipio
+WHERE ut.tipo = 'municipio' 
+  AND m.codigo_municipio IS NULL
+
+ORDER BY 
+    CASE severidad 
+        WHEN 'CRÍTICA' THEN 1 
+        WHEN 'ALTA' THEN 2 
+        WHEN 'MEDIA' THEN 3 
+        ELSE 4 
+    END,
+    valor_metrica DESC;
+
+\echo 'Vista v_alertas_dashboard creada'
+
+-- =====================================================
+-- 6. VISTA ANÁLISIS: Instituciones Performance
+-- =====================================================
+
+CREATE OR REPLACE VIEW v_instituciones_performance AS
+SELECT 
+    v.institucion,
+    COUNT(*) as total_vacunas,
+    COUNT(DISTINCT v.codigo_municipio) as municipios_atendidos,
+    COUNT(DISTINCT CONCAT(v.año, '-', LPAD(v.mes::text, 2, '0'))) as meses_activos,
+    
+    -- Distribución geográfica
+    STRING_AGG(DISTINCT v.municipio, ', ' ORDER BY v.municipio) as municipios_lista,
+    MODE() WITHIN GROUP (ORDER BY ut.region) as region_principal,
+    
+    -- Distribución por grupo etario
+    COUNT(*) FILTER (WHERE v.grupo_etario = '09-23 meses') as vacunas_9_23m,
+    COUNT(*) FILTER (WHERE v.grupo_etario = '02-19 años') as vacunas_2_19a,
+    COUNT(*) FILTER (WHERE v.grupo_etario = '20-59 años') as vacunas_20_59a,
+    COUNT(*) FILTER (WHERE v.grupo_etario = '60+ años') as vacunas_60mas,
+    
+    -- Actividad temporal
     MIN(v.fecha_aplicacion) as inicio_actividad,
     MAX(v.fecha_aplicacion) as ultima_actividad,
-    ROUND(COUNT(*)::DECIMAL / 12, 1) as promedio_mensual  -- Asumiendo año completo
     
-FROM vacunacion_fiebre_amarilla v
-JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
-WHERE ut.tipo = 'municipio'
-GROUP BY v.institucion, v.municipio, ut.region, v.tipo_ubicacion, v.año
-ORDER BY vacunas_aplicadas DESC;
-
-\echo 'Vista v_instituciones_rendimiento creada'
-
--- =====================================================
--- 4. VISTA ALERTAS: Municipios con Baja Cobertura
--- =====================================================
-CREATE VIEW v_alertas_cobertura_baja AS
-SELECT 
-    municipio,
-    region,
-    tipo_ubicacion,
-    grupo_etario,
-    vacunados,
-    poblacion_total,
-    cobertura_porcentaje,
+    -- Métricas de performance
+    ROUND(COUNT(*) / COUNT(DISTINCT CONCAT(v.año, '-', LPAD(v.mes::text, 2, '0')))::decimal, 1) as promedio_mensual,
     
-    -- Clasificación de alerta
-    CASE 
-        WHEN cobertura_porcentaje < 50 THEN 'CRÍTICA'
-        WHEN cobertura_porcentaje < 70 THEN 'BAJA'
-        WHEN cobertura_porcentaje < 85 THEN 'REGULAR'
-        ELSE 'ADECUADA'
-    END as nivel_alerta,
-    
-    -- Brecha de vacunación
-    CASE 
-        WHEN poblacion_total > 0 
-        THEN poblacion_total - vacunados
-        ELSE 0 
-    END as faltantes_para_100,
-    
-    periodo_mes
-
-FROM v_coberturas_dashboard
-WHERE cobertura_porcentaje < 85
-ORDER BY cobertura_porcentaje ASC, poblacion_total DESC;
-
-\echo 'Vista v_alertas_cobertura_baja creada'
-
--- =====================================================
--- 5. VISTA TEMPORAL: Tendencias de Vacunación
--- =====================================================
-CREATE VIEW v_tendencias_vacunacion AS
-SELECT 
-    año,
-    mes,
-    semana_epidemiologica,
-    municipio,
-    region,
-    tipo_ubicacion,
-    grupo_etario,
-    
-    -- Conteos temporales
-    COUNT(*) as vacunados_periodo,
-    COUNT(DISTINCT institucion) as instituciones_activas,
-    
-    -- Acumulados (window function)
-    SUM(COUNT(*)) OVER (
-        PARTITION BY municipio, grupo_etario, tipo_ubicacion 
-        ORDER BY año, mes
-    ) as vacunados_acumulado,
-    
-    -- Promedio móvil 3 meses
-    AVG(COUNT(*)) OVER (
-        PARTITION BY municipio, grupo_etario, tipo_ubicacion 
-        ORDER BY año, mes 
-        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-    ) as promedio_movil_3m,
-    
-    -- Comparación mes anterior
-    LAG(COUNT(*)) OVER (
-        PARTITION BY municipio, grupo_etario, tipo_ubicacion 
-        ORDER BY año, mes
-    ) as vacunados_mes_anterior
+    -- Concentración geográfica
+    ROUND(COUNT(DISTINCT v.codigo_municipio) * 100.0 / 47, 1) as cobertura_territorial_pct
 
 FROM vacunacion_fiebre_amarilla v
-JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
-WHERE ut.tipo = 'municipio'
-GROUP BY año, mes, semana_epidemiologica, municipio, region, tipo_ubicacion, grupo_etario
-ORDER BY año, mes, municipio, grupo_etario;
+LEFT JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
+WHERE v.institucion IS NOT NULL 
+  AND v.institucion != ''
+GROUP BY v.institucion
+HAVING COUNT(*) >= 10  -- Solo instituciones con actividad significativa
+ORDER BY total_vacunas DESC;
 
-\echo 'Vista v_tendencias_vacunacion creada'
+\echo 'Vista v_instituciones_performance creada'
 
 -- =====================================================
--- 6. VISTA RESUMEN: Indicadores Clave
+-- 7. FUNCIONES DE ACTUALIZACIÓN AUTOMÁTICA
 -- =====================================================
-CREATE VIEW v_indicadores_clave AS
+
+-- Función para refrescar vista materializada
+CREATE OR REPLACE FUNCTION refresh_dashboard_views()
+RETURNS void AS $$
+BEGIN
+    -- Refrescar vista materializada principal
+    REFRESH MATERIALIZED VIEW mv_dashboard_principal;
+    
+    -- Log de actualización
+    INSERT INTO dashboard_refresh_log (refreshed_at, records_count) 
+    SELECT NOW(), COUNT(*) FROM mv_dashboard_principal
+    ON CONFLICT DO NOTHING;
+    
+    -- Analizar estadísticas
+    ANALYZE mv_dashboard_principal;
+    
+    RAISE NOTICE 'Dashboard views refreshed at %', NOW();
+END;
+$$ LANGUAGE plpgsql;
+
+-- Tabla para log de refrescos (opcional)
+CREATE TABLE IF NOT EXISTS dashboard_refresh_log (
+    id SERIAL PRIMARY KEY,
+    refreshed_at TIMESTAMP DEFAULT NOW(),
+    records_count INTEGER,
+    duration_ms INTEGER
+);
+
+\echo 'Función refresh_dashboard_views() creada'
+
+-- =====================================================
+-- 8. ÍNDICES ADICIONALES PARA PERFORMANCE
+-- =====================================================
+
+-- Índices para consultas de dashboard frecuentes
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vacunacion_dashboard_lookup 
+ON vacunacion_fiebre_amarilla(codigo_municipio, grupo_etario, tipo_ubicacion, fecha_aplicacion);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vacunacion_institucion_activa
+ON vacunacion_fiebre_amarilla(institucion, fecha_aplicacion) 
+WHERE institucion IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_poblacion_lookup_completo
+ON poblacion(codigo_municipio, grupo_etario, tipo_ubicacion) 
+INCLUDE (poblacion_total);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_territorios_mapa
+ON unidades_territoriales(codigo_divipola, tipo, region) 
+INCLUDE (nombre);
+
+\echo 'Índices adicionales para performance creados'
+
+-- =====================================================
+-- 9. VISTA DE MONITOREO: Performance Sistema
+-- =====================================================
+
+CREATE OR REPLACE VIEW v_monitoreo_sistema AS
 SELECT 
-    'Tolima' as departamento,
-    COUNT(DISTINCT v.codigo_municipio) as municipios_con_vacunacion,
-    COUNT(*) as total_vacunados_historico,
-    COUNT(DISTINCT v.institucion) as instituciones_total,
+    'database_size' as metrica,
+    pg_size_pretty(pg_database_size(current_database())) as valor,
+    'Tamaño total base de datos' as descripcion
     
-    -- Por ubicación
-    COUNT(CASE WHEN v.tipo_ubicacion = 'Urbano' THEN 1 END) as vacunados_urbano,
-    COUNT(CASE WHEN v.tipo_ubicacion = 'Rural' THEN 1 END) as vacunados_rural,
-    ROUND(
-        COUNT(CASE WHEN v.tipo_ubicacion = 'Rural' THEN 1 END) * 100.0 / COUNT(*), 1
-    ) as porcentaje_rural,
-    
-    -- Por grupo etario
-    COUNT(CASE WHEN v.grupo_etario = 'Menor de 9 meses' THEN 1 END) as menores_9m,
-    COUNT(CASE WHEN v.grupo_etario = '09-23 meses' THEN 1 END) as entre_9_23m,
-    COUNT(CASE WHEN v.grupo_etario = '02-19 años' THEN 1 END) as entre_2_19a,
-    COUNT(CASE WHEN v.grupo_etario = '20-59 años' THEN 1 END) as entre_20_59a,
-    COUNT(CASE WHEN v.grupo_etario = '60+ años' THEN 1 END) as mayores_60a,
-    
-    -- Temporal
-    MIN(v.fecha_aplicacion) as primera_vacuna_departamental,
-    MAX(v.fecha_aplicacion) as ultima_vacuna_departamental,
-    
-    -- Cobertura general aproximada
-    COALESCE(SUM(p.poblacion_total), 0) as poblacion_total_estimada,
-    CASE 
-        WHEN COALESCE(SUM(p.poblacion_total), 0) > 0 
-        THEN ROUND(COUNT(*) * 100.0 / SUM(p.poblacion_total), 2)
-        ELSE 0 
-    END as cobertura_general_estimada
+UNION ALL
 
-FROM vacunacion_fiebre_amarilla v
-JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
-LEFT JOIN poblacion p ON (
-    v.codigo_municipio = p.codigo_municipio AND
-    v.grupo_etario = p.grupo_etario AND
-    v.tipo_ubicacion = p.tipo_ubicacion
-)
-WHERE ut.tipo = 'municipio';
-
-\echo 'Vista v_indicadores_clave creada'
-
--- =====================================================
--- 7. VISTA CASOS: Dashboard Casos Fiebre Amarilla
--- =====================================================
-CREATE OR REPLACE VIEW v_casos_dashboard AS
 SELECT 
-    c.codigo_municipio_residencia as codigo_municipio,
-    c.municipio_residencia as municipio,
-    ut.region,
-    c.tipo_ubicacion_residencia as tipo_ubicacion,
-    c.semana_epidemiologica,
-    c.año,
-    EXTRACT(MONTH FROM c.fecha_notificacion) as mes,
+    'table_vacunacion_size' as metrica,
+    pg_size_pretty(pg_total_relation_size('vacunacion_fiebre_amarilla')) as valor,
+    'Tamaño tabla vacunación' as descripcion
     
-    -- Conteos principales
-    COUNT(*) as numero_casos,
-    COUNT(CASE WHEN c.condicion_final = 'Muerto' THEN 1 END) as defunciones,
-    COUNT(CASE WHEN c.clasificacion_final = 'Confirmado' THEN 1 END) as confirmados,
-    COUNT(CASE WHEN c.clasificacion_final = 'Probable' THEN 1 END) as probables,
-    COUNT(CASE WHEN c.clasificacion_final = 'Sospechoso' THEN 1 END) as sospechosos,
+UNION ALL
+
+SELECT 
+    'table_poblacion_size' as metrica,
+    pg_size_pretty(pg_total_relation_size('poblacion')) as valor,
+    'Tamaño tabla población' as descripcion
     
-    -- Indicadores
+UNION ALL
+
+SELECT 
+    'mv_dashboard_size' as metrica,
+    pg_size_pretty(pg_total_relation_size('mv_dashboard_principal')) as valor,
+    'Tamaño vista materializada dashboard' as descripcion
+    
+UNION ALL
+
+SELECT 
+    'last_vacuum_vacunacion' as metrica,
+    COALESCE(last_vacuum::text, 'Nunca') as valor,
+    'Último vacuum tabla vacunación' as descripcion
+FROM pg_stat_user_tables 
+WHERE relname = 'vacunacion_fiebre_amarilla'
+
+UNION ALL
+
+SELECT 
+    'dashboard_refresh_needed' as metrica,
     CASE 
-        WHEN COUNT(*) > 0 
-        THEN ROUND(COUNT(CASE WHEN c.condicion_final = 'Muerto' THEN 1 END) * 100.0 / COUNT(*), 2)
-        ELSE 0 
-    END as letalidad_porcentaje,
-    
-    -- Temporal
-    MIN(c.fecha_notificacion) as primer_caso,
-    MAX(c.fecha_notificacion) as ultimo_caso
+        WHEN EXISTS(
+            SELECT 1 FROM vacunacion_fiebre_amarilla v
+            LEFT JOIN mv_dashboard_principal m ON v.codigo_municipio = m.codigo_municipio
+            WHERE v.created_at > m.actualizado_en OR m.codigo_municipio IS NULL
+        ) THEN 'SÍ'
+        ELSE 'NO'
+    END as valor,
+    'Vista materializada necesita actualización' as descripcion;
 
-FROM casos_fiebre_amarilla c
-LEFT JOIN unidades_territoriales ut ON c.codigo_municipio_residencia = ut.codigo_divipola
-WHERE ut.tipo = 'municipio' OR ut.tipo IS NULL
-GROUP BY 
-    c.codigo_municipio_residencia, c.municipio_residencia, ut.region,
-    c.tipo_ubicacion_residencia, c.semana_epidemiologica, c.año,
-    EXTRACT(MONTH FROM c.fecha_notificacion)
-ORDER BY c.año DESC, c.semana_epidemiologica DESC, c.municipio_residencia;
-
-\echo 'Vista v_casos_dashboard creada'
+\echo 'Vista v_monitoreo_sistema creada'
 
 -- =====================================================
--- 8. ÍNDICES ADICIONALES PARA VISTAS
+-- 10. CONFIGURACIÓN FINAL Y ESTADÍSTICAS
 -- =====================================================
 
--- Índice para mejores performance en vistas con GROUP BY temporal
-CREATE INDEX IF NOT EXISTS idx_vacunacion_grupo_temporal 
-ON vacunacion_fiebre_amarilla(municipio, grupo_etario, tipo_ubicacion, año, mes);
-
--- Índice para análisis por institución
-CREATE INDEX IF NOT EXISTS idx_vacunacion_institucion_municipio 
-ON vacunacion_fiebre_amarilla(institucion, municipio, año);
-
-\echo 'Índices adicionales creados'
-
--- =====================================================
--- 9. PERMISOS Y CONFIGURACIONES FINALES
--- =====================================================
-
--- Configurar zona horaria
-SET timezone = 'America/Bogota';
-
--- Estadísticas para optimizador
+-- Actualizar estadísticas de todas las tablas
 ANALYZE unidades_territoriales;
 ANALYZE poblacion;
 ANALYZE vacunacion_fiebre_amarilla;
+ANALYZE mv_dashboard_principal;
 
-\echo 'Configuraciones finales aplicadas'
+-- Configurar auto-vacuum más agresivo para tablas grandes
+ALTER TABLE vacunacion_fiebre_amarilla SET (
+    autovacuum_vacuum_scale_factor = 0.1,
+    autovacuum_analyze_scale_factor = 0.05
+);
+
+ALTER TABLE poblacion SET (
+    autovacuum_vacuum_scale_factor = 0.2,
+    autovacuum_analyze_scale_factor = 0.1
+);
+
+-- Grant permisos (ajustar según necesidades)
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO tolima_admin;
+GRANT SELECT ON mv_dashboard_principal TO tolima_admin;
+
+\echo 'Configuración de performance aplicada'
 \echo 'Vistas optimizadas creadas exitosamente!'
-\echo 'Sistema listo para recibir datos y conectar dashboard'
+\echo ''
+\echo '🚀 PERFORMANCE OPTIMIZADO:'
+\echo '   • Vista materializada: mv_dashboard_principal (consultas <2s)'
+\echo '   • Índices especializados para dashboard'
+\echo '   • Vistas de tiempo real para métricas'
+\echo '   • Sistema de alertas automático'
+\echo '   • Monitoreo de performance integrado'
+\echo ''
+\echo '📊 Para actualizar dashboard: SELECT refresh_dashboard_views();'
+\echo '🔍 Para monitorear: SELECT * FROM v_monitoreo_sistema;'

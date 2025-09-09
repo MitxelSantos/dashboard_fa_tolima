@@ -1,0 +1,101 @@
+# Dockerfile.prod - Aplicación Principal OPTIMIZADA
+# Multi-stage build para menor tamaño y mejor seguridad
+
+# =====================================================
+# STAGE 1: Builder - Compilación y dependencias
+# =====================================================
+FROM python:3.11-slim as builder
+
+# Variables de build
+ARG PYTHON_VERSION=3.11-slim
+ARG BUILD_ENV=production
+
+# Metadatos
+LABEL maintainer="Sistema Epidemiológico Tolima"
+LABEL version="2.0"
+LABEL description="Sistema optimizado para vigilancia epidemiológica"
+
+# Instalar dependencias del sistema para compilación
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libpq-dev \
+    libgeos-dev \
+    libproj-dev \
+    libgdal-dev \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Crear usuario no-root
+RUN useradd --create-home --shell /bin/bash tolima
+
+# Configurar directorio de trabajo
+WORKDIR /app
+
+# Copiar requirements primero (mejor cache)
+COPY requirements.txt ./
+
+# Instalar dependencias Python optimizadas
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --user --no-warn-script-location \
+    -r requirements.txt
+
+# =====================================================
+# STAGE 2: Runtime - Imagen final optimizada
+# =====================================================
+FROM python:3.11-slim as runtime
+
+# Instalar solo dependencias de runtime necesarias
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libgeos-c1v5 \
+    libproj25 \
+    libgdal32 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Crear usuario no-root
+RUN useradd --create-home --shell /bin/bash tolima
+
+# Configurar directorios
+WORKDIR /app
+RUN chown -R tolima:tolima /app
+
+# Copiar dependencias instaladas desde builder
+COPY --from=builder /root/.local /home/tolima/.local
+
+# Copiar código fuente
+COPY --chown=tolima:tolima . .
+
+# Configurar PATH para usuario
+ENV PATH=/home/tolima/.local/bin:$PATH
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Configuraciones de optimización
+ENV MALLOC_ARENA_MAX=2
+ENV MALLOC_MMAP_THRESHOLD_=131072
+ENV MALLOC_TRIM_THRESHOLD_=131072
+ENV MALLOC_TOP_PAD_=131072
+ENV MALLOC_MMAP_MAX_=65536
+
+# Crear directorios necesarios
+RUN mkdir -p logs backups data/processed && \
+    chown -R tolima:tolima logs backups data
+
+# Cambiar a usuario no-root
+USER tolima
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "from config import DatabaseConfig; import psycopg2; psycopg2.connect(**DatabaseConfig.get_connection_params())" || exit 1
+
+# Comando por defecto
+CMD ["python", "scripts/sistema_coordinador_optimizado.py", "--essential"]
+
+# =====================================================
+# Dockerfile.dashboard - Dashboard Streamlit Optimizado
+# =====================================================

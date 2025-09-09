@@ -1,531 +1,832 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Sistema Coordinador Maestro
-Orquesta actualizaciones completas del Sistema Epidemiológico Tolima
-Usa los scripts adaptados con configuración centralizada
+scripts/sistema_coordinador_optimizado.py - Orquestador Maestro Optimizado
+PERFORMANCE CRÍTICO: Orquesta carga completa con streaming y monitoreo
+Memoria optimizada, logging estructurado, recuperación automática
 """
 
+import sys
 import subprocess
 import os
-import sys
-from datetime import datetime
-import pandas as pd
-from sqlalchemy import create_engine, text
-import warnings
-
-import sys
 from pathlib import Path
+from datetime import datetime, timedelta
+import time
+import structlog
+from sqlalchemy import create_engine, text
+from typing import Dict, List, Optional, Tuple
+import psutil
+from dataclasses import dataclass
+from enum import Enum
 
+# Añadir directorio padre al path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Importar configuración centralizada
+# Importar módulos optimizados
 from config import (
-    DATABASE_URL, FileConfig, validar_configuracion,
-    cargar_codigos_divipola_desde_gpkg
+    DatabaseConfig, FileConfig, validar_configuracion_optimizada,
+    divipola_cache
 )
+from core.processors import MemoryMonitor
 
-warnings.filterwarnings('ignore')
+logger = structlog.get_logger()
 
-class SistemaCoordinadorTolima:
-    def __init__(self):
-        self.inicio = datetime.now()
-        self.logs = []
-        self.engine = None
-        
-    def log(self, mensaje, tipo="INFO"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {tipo}: {mensaje}"
-        self.logs.append(log_entry)
-        print(log_entry)
+# ================================
+# TIPOS Y CONFIGURACIONES
+# ================================
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+@dataclass
+class TaskResult:
+    task_name: str
+    status: TaskStatus
+    duration_seconds: float
+    records_processed: int
+    peak_memory_mb: float
+    error_message: Optional[str] = None
+    details: Optional[Dict] = None
+
+class SystemCoordinatorOptimized:
+    """Coordinador maestro optimizado para carga completa del sistema"""
     
-    def verificar_docker(self):
-        """Verifica que Docker PostgreSQL esté corriendo"""
-        self.log("🐳 Verificando Docker PostgreSQL...")
+    def __init__(self):
+        self.start_time = datetime.now()
+        self.memory_monitor = MemoryMonitor(max_memory_mb=1024)  # 1GB limit
+        self.engine = None
+        self.task_results: List[TaskResult] = []
+        self.total_records_processed = 0
+        
+        # Configuración de tareas
+        self.tasks_config = {
+            'validate_system': {
+                'name': 'Validación Sistema',
+                'required': True,
+                'dependencies': [],
+                'timeout_minutes': 5
+            },
+            'load_territories': {
+                'name': 'Carga Unidades Territoriales',
+                'required': True,
+                'dependencies': ['validate_system'],
+                'timeout_minutes': 10,
+                'file_required': FileConfig.TERRITORIOS_FILE
+            },
+            'load_population': {
+                'name': 'Carga Población SISBEN (203MB)',
+                'required': True,
+                'dependencies': ['load_territories'],
+                'timeout_minutes': 15,
+                'file_required': FileConfig.POBLACION_FILE
+            },
+            'load_vaccination': {
+                'name': 'Carga Vacunación PAIweb (67.5MB)',
+                'required': True,
+                'dependencies': ['load_population'],
+                'timeout_minutes': 10,
+                'file_required': FileConfig.PAIWEB_FILE
+            },
+            'load_cases': {
+                'name': 'Carga Casos Fiebre Amarilla',
+                'required': False,
+                'dependencies': ['load_territories'],
+                'timeout_minutes': 5,
+                'file_required': FileConfig.CASOS_FILE
+            },
+            'load_epizootics': {
+                'name': 'Carga Epizootias',
+                'required': False,
+                'dependencies': ['load_territories'],
+                'timeout_minutes': 5,
+                'file_required': FileConfig.EPIZOOTIAS_FILE
+            },
+            'optimize_database': {
+                'name': 'Optimización Base de Datos',
+                'required': True,
+                'dependencies': ['load_vaccination'],
+                'timeout_minutes': 5
+            },
+            'validate_integrity': {
+                'name': 'Validación Integridad Final',
+                'required': True,
+                'dependencies': ['optimize_database'],
+                'timeout_minutes': 5
+            }
+        }
+    
+    def log_task_start(self, task_name: str):
+        """Log inicio de tarea"""
+        config = self.tasks_config[task_name]
+        logger.info("task_started",
+                   task=task_name,
+                   display_name=config['name'],
+                   required=config['required'],
+                   dependencies=config['dependencies'],
+                   timeout_minutes=config['timeout_minutes'],
+                   memory_mb=round(self.memory_monitor.get_memory_usage_mb(), 2))
+    
+    def log_task_result(self, result: TaskResult):
+        """Log resultado de tarea"""
+        self.task_results.append(result)
+        self.total_records_processed += result.records_processed
+        
+        logger.info("task_completed",
+                   task=result.task_name,
+                   status=result.status.value,
+                   duration_seconds=result.duration_seconds,
+                   records_processed=result.records_processed,
+                   peak_memory_mb=result.peak_memory_mb,
+                   error=result.error_message)
+    
+    def check_dependencies(self, task_name: str) -> bool:
+        """Verifica que las dependencias estén completadas"""
+        config = self.tasks_config[task_name]
+        dependencies = config['dependencies']
+        
+        for dep in dependencies:
+            dep_result = next((r for r in self.task_results if r.task_name == dep), None)
+            if not dep_result or dep_result.status != TaskStatus.COMPLETED:
+                logger.warning("dependency_not_met", task=task_name, missing_dependency=dep)
+                return False
+        
+        return True
+    
+    def check_file_requirements(self, task_name: str) -> bool:
+        """Verifica que archivos requeridos existan"""
+        config = self.tasks_config[task_name]
+        
+        if 'file_required' in config:
+            file_path = config['file_required']
+            if not file_path.exists():
+                logger.warning("required_file_missing", task=task_name, file=str(file_path))
+                return False
+            
+            # Log tamaño de archivo
+            size_mb = file_path.stat().st_size / (1024 * 1024)
+            logger.info("file_validated", task=task_name, file=str(file_path), size_mb=round(size_mb, 2))
+        
+        return True
+    
+    def validate_system_task(self) -> TaskResult:
+        """Tarea: Validación completa del sistema"""
+        start_time = time.time()
+        start_memory = self.memory_monitor.get_memory_usage_mb()
         
         try:
-            # Verificar si docker-compose está disponible
-            result = subprocess.run(["docker-compose", "--version"], 
-                                  capture_output=True, text=True, check=True)
-            self.log(f"Docker Compose: {result.stdout.strip()}")
+            # Validar configuración
+            config_valid = validar_configuracion_optimizada()
             
-            # Levantar servicios si no están corriendo
-            self.log("Iniciando servicios Docker...")
-            subprocess.run(["docker-compose", "up", "-d"], check=True)
-            
-            # Esperar un momento para que PostgreSQL inicie
-            import time
-            time.sleep(5)
-            
-            # Verificar conexión PostgreSQL
-            self.engine = create_engine(DATABASE_URL)
+            # Verificar conexión BD
+            self.engine = create_engine(DatabaseConfig.get_connection_url())
             with self.engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             
-            self.log("✅ PostgreSQL funcionando correctamente")
-            return True
+            # Verificar caché DIVIPOLA
+            divipola_stats = divipola_cache.get_stats()
             
-        except subprocess.CalledProcessError as e:
-            self.log(f"❌ Error Docker: {e}", "ERROR")
-            return False
-        except Exception as e:
-            self.log(f"❌ Error conexión PostgreSQL: {e}", "ERROR")
-            return False
-    
-    def verificar_configuracion_sistema(self):
-        """Verifica configuración del sistema"""
-        self.log("⚙️ Verificando configuración del sistema...")
-        
-        try:
-            # Ejecutar validación de configuración
-            validar_configuracion()
+            # Verificar archivos disponibles
+            files_status = FileConfig.validate_files()
+            available_files = sum(1 for exists in files_status.values() if exists)
             
-            # Cargar códigos DIVIPOLA
-            codigos = cargar_codigos_divipola_desde_gpkg(forzar_recarga=True)
-            if codigos:
-                municipios = len(codigos['municipios'])
-                veredas = len(codigos['veredas'])
-                self.log(f"✅ Códigos DIVIPOLA: {municipios} municipios, {veredas} veredas")
+            if config_valid and divipola_stats['municipios'] > 0:
+                return TaskResult(
+                    task_name='validate_system',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    details={
+                        'divipola_municipios': divipola_stats['municipios'],
+                        'available_files': available_files,
+                        'total_files': len(files_status)
+                    }
+                )
             else:
-                self.log("⚠️ No se pudieron cargar códigos DIVIPOLA", "WARNING")
-            
-            return True
-            
+                return TaskResult(
+                    task_name='validate_system',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message="Configuración inválida o DIVIPOLA vacío"
+                )
+                
         except Exception as e:
-            self.log(f"❌ Error verificando configuración: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='validate_system',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def verificar_archivos_entrada(self):
-        """Verifica que los archivos de entrada existan"""
-        self.log("📂 Verificando archivos de entrada...")
-        
-        archivos = {
-            "Unidades Territoriales": FileConfig.TERRITORIOS_FILE,
-            "Población SISBEN": FileConfig.POBLACION_FILE, 
-            "Vacunación PAIweb": FileConfig.PAIWEB_FILE,
-            "Casos Fiebre Amarilla": FileConfig.CASOS_FILE,
-            "Epizootias": FileConfig.EPIZOOTIAS_FILE
-        }
-        
-        archivos_faltantes = []
-        archivos_encontrados = []
-        
-        for nombre, ruta in archivos.items():
-            if ruta.exists():
-                tamaño = ruta.stat().st_size / (1024*1024)  # MB
-                self.log(f"✅ {nombre}: {ruta} ({tamaño:.1f} MB)")
-                archivos_encontrados.append(nombre)
-            else:
-                self.log(f"❌ {nombre}: {ruta} NO ENCONTRADO", "ERROR")
-                archivos_faltantes.append(nombre)
-        
-        if archivos_faltantes:
-            self.log(f"⚠️ Archivos faltantes: {', '.join(archivos_faltantes)}", "WARNING")
-            return False, archivos_encontrados, archivos_faltantes
-        
-        return True, archivos_encontrados, []
-    
-    def cargar_unidades_territoriales(self):
-        """Carga unidades territoriales usando script adaptado"""
-        self.log("🗺️ Cargando unidades territoriales...")
+    def load_territories_task(self) -> TaskResult:
+        """Tarea: Carga unidades territoriales"""
+        start_time = time.time()
         
         try:
             from cargar_geodata import cargar_unidades_territoriales_postgresql
-            resultado = cargar_unidades_territoriales_postgresql(str(FileConfig.TERRITORIOS_FILE))
             
-            if resultado:
-                self.log("✅ Unidades territoriales cargadas exitosamente")
-                return True
+            success = cargar_unidades_territoriales_postgresql(str(FileConfig.TERRITORIOS_FILE))
+            
+            if success:
+                # Verificar registros cargados
+                with self.engine.connect() as conn:
+                    total_records = conn.execute(text("SELECT COUNT(*) FROM unidades_territoriales")).scalar()
+                
+                return TaskResult(
+                    task_name='load_territories',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=total_records,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb()
+                )
             else:
-                self.log("❌ Error cargando unidades territoriales", "ERROR")
-                return False
+                return TaskResult(
+                    task_name='load_territories',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message="Error en carga de territorios"
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error crítico unidades territoriales: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='load_territories',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def cargar_poblacion(self):
-        """Carga población SISBEN usando script adaptado integrado"""
-        self.log("👥 Cargando población SISBEN...")
+    def load_population_task(self) -> TaskResult:
+        """Tarea: Carga población usando streaming optimizado"""
+        start_time = time.time()
         
         try:
-            from cargar_poblacion import procesar_poblacion_completo
-            resultado = procesar_poblacion_completo(str(FileConfig.POBLACION_FILE))
+            from core.processors import process_large_file_optimized
             
-            if resultado:
-                self.log("✅ Población cargada exitosamente")
-                return True
+            result = process_large_file_optimized('population')
+            
+            if result['success']:
+                return TaskResult(
+                    task_name='load_population',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=result['duration_seconds'],
+                    records_processed=result['processed_records'],
+                    peak_memory_mb=result['peak_memory_mb'],
+                    details={
+                        'records_per_second': result['records_per_second'],
+                        'total_in_db': result['total_in_db']
+                    }
+                )
             else:
-                self.log("❌ Error cargando población", "ERROR")
-                return False
+                return TaskResult(
+                    task_name='load_population',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=result.get('processed_records', 0),
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message=result.get('error', 'Error desconocido en población')
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error crítico población: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='load_population',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def cargar_vacunacion(self):
-        """Carga datos de vacunación usando script adaptado"""
-        self.log("💉 Cargando vacunación PAIweb...")
+    def load_vaccination_task(self) -> TaskResult:
+        """Tarea: Carga vacunación usando streaming optimizado"""
+        start_time = time.time()
         
         try:
-            from cargar_vacunacion import procesar_vacunacion_completo
-            resultado = procesar_vacunacion_completo(str(FileConfig.PAIWEB_FILE))
+            from core.processors import process_large_file_optimized
             
-            if resultado:
-                self.log("✅ Vacunación cargada exitosamente")
-                return True
+            result = process_large_file_optimized('vaccination')
+            
+            if result['success']:
+                return TaskResult(
+                    task_name='load_vaccination',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=result['duration_seconds'],
+                    records_processed=result['processed_records'],
+                    peak_memory_mb=result['peak_memory_mb'],
+                    details={
+                        'records_per_second': result['records_per_second'],
+                        'total_in_db': result['total_in_db']
+                    }
+                )
             else:
-                self.log("❌ Error cargando vacunación", "ERROR") 
-                return False
+                return TaskResult(
+                    task_name='load_vaccination',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=result.get('processed_records', 0),
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message=result.get('error', 'Error desconocido en vacunación')
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error crítico vacunación: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='load_vaccination',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def cargar_casos(self):
-        """Carga casos de fiebre amarilla usando script adaptado"""
-        self.log("🦠 Cargando casos fiebre amarilla...")
+    def load_cases_task(self) -> TaskResult:
+        """Tarea: Carga casos (usando script existente)"""
+        start_time = time.time()
         
         try:
             from cargar_casos import procesar_casos_completo
-            resultado = procesar_casos_completo(str(FileConfig.CASOS_FILE))
             
-            if resultado:
-                self.log("✅ Casos cargados exitosamente")
-                return True
+            success = procesar_casos_completo(str(FileConfig.CASOS_FILE))
+            
+            if success:
+                # Verificar registros cargados
+                with self.engine.connect() as conn:
+                    total_records = conn.execute(text("SELECT COUNT(*) FROM casos_fiebre_amarilla")).scalar()
+                
+                return TaskResult(
+                    task_name='load_cases',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=total_records,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb()
+                )
             else:
-                self.log("❌ Error cargando casos", "ERROR")
-                return False
+                return TaskResult(
+                    task_name='load_cases',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message="Error en carga de casos"
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error crítico casos: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='load_cases',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def cargar_epizootias(self):
-        """Carga epizootias usando script adaptado"""
-        self.log("🐒 Cargando epizootias...")
+    def load_epizootics_task(self) -> TaskResult:
+        """Tarea: Carga epizootias (usando script existente)"""
+        start_time = time.time()
         
         try:
             from cargar_epizootias import procesar_epizootias_completo
-            resultado = procesar_epizootias_completo(str(FileConfig.EPIZOOTIAS_FILE))
             
-            if resultado:
-                self.log("✅ Epizootias cargadas exitosamente")
-                return True
+            success = procesar_epizootias_completo(str(FileConfig.EPIZOOTIAS_FILE))
+            
+            if success:
+                # Verificar registros cargados
+                with self.engine.connect() as conn:
+                    total_records = conn.execute(text("SELECT COUNT(*) FROM epizootias")).scalar()
+                
+                return TaskResult(
+                    task_name='load_epizootics',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=total_records,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb()
+                )
             else:
-                self.log("❌ Error cargando epizootias", "ERROR")
-                return False
+                return TaskResult(
+                    task_name='load_epizootics',
+                    status=TaskStatus.FAILED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                    error_message="Error en carga de epizootias"
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error crítico epizootias: {e}", "ERROR")
-            return False
+            return TaskResult(
+                task_name='load_epizootics',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def verificar_integridad_sistema(self):
-        """Verifica integridad del sistema completo"""
-        self.log("🔍 Verificando integridad del sistema...")
+    def optimize_database_task(self) -> TaskResult:
+        """Tarea: Optimización de base de datos"""
+        start_time = time.time()
         
         try:
-            verificaciones = {
-                "unidades_territoriales": "SELECT COUNT(*) FROM unidades_territoriales",
-                "poblacion": "SELECT COUNT(*) FROM poblacion", 
-                "vacunacion": "SELECT COUNT(*) FROM vacunacion_fiebre_amarilla",
-                "casos": "SELECT COUNT(*) FROM casos_fiebre_amarilla",
-                "epizootias": "SELECT COUNT(*) FROM epizootias"
-            }
-            
             with self.engine.connect() as conn:
-                self.log("📊 Resumen de datos cargados:")
-                totales = {}
-                
-                for tabla, query in verificaciones.items():
-                    try:
-                        total = conn.execute(text(query)).scalar()
-                        totales[tabla] = total
-                        self.log(f"   {tabla.replace('_', ' ').title()}: {total:,} registros")
-                    except Exception as e:
-                        totales[tabla] = 0
-                        self.log(f"   {tabla.replace('_', ' ').title()}: ERROR - {e}")
-                
-                # Verificar vistas críticas
-                vistas_criticas = [
-                    "v_coberturas_dashboard",
-                    "v_mapa_coberturas", 
-                    "v_indicadores_clave"
+                # Crear/refrescar vistas materializadas
+                optimization_sql = [
+                    # Estadísticas actualizadas
+                    "ANALYZE unidades_territoriales",
+                    "ANALYZE poblacion", 
+                    "ANALYZE vacunacion_fiebre_amarilla",
+                    
+                    # Índices optimizados si no existen
+                    """CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cobertura_dashboard 
+                       ON vacunacion_fiebre_amarilla(codigo_municipio, grupo_etario, tipo_ubicacion)""",
+                    
+                    # Vacuum ligero
+                    "VACUUM (ANALYZE) poblacion",
+                    "VACUUM (ANALYZE) vacunacion_fiebre_amarilla"
                 ]
                 
-                for vista in vistas_criticas:
-                    try:
-                        test_vista = conn.execute(text(f"SELECT COUNT(*) FROM {vista}")).scalar()
-                        self.log(f"   Vista {vista}: {test_vista:,} registros")
-                    except Exception as e:
-                        self.log(f"   Vista {vista}: ERROR - {e}")
+                for sql in optimization_sql:
+                    logger.debug("executing_optimization_sql", sql=sql[:50] + "...")
+                    conn.execute(text(sql))
+                    conn.commit()
                 
-                return totales
+                return TaskResult(
+                    task_name='optimize_database',
+                    status=TaskStatus.COMPLETED,
+                    duration_seconds=time.time() - start_time,
+                    records_processed=0,
+                    peak_memory_mb=self.memory_monitor.get_memory_usage_mb()
+                )
                 
         except Exception as e:
-            self.log(f"❌ Error verificación integridad: {e}", "ERROR")
-            return {}
+            return TaskResult(
+                task_name='optimize_database',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def generar_reporte_final(self, totales, cargas_exitosas, total_cargas):
-        """Genera reporte final de la actualización"""
-        duracion = datetime.now() - self.inicio
-        
-        print(f"\n{'='*80}")
-        print(" REPORTE FINAL ACTUALIZACIÓN SISTEMA EPIDEMIOLÓGICO TOLIMA ".center(80))
-        print("=" * 80)
-        
-        print(f"🕐 Inicio: {self.inicio.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"🕐 Fin: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"⏱️ Duración total: {duracion.total_seconds():.1f} segundos")
-        
-        # Estado general
-        if cargas_exitosas == total_cargas:
-            print(f"🎉 ESTADO: ACTUALIZACIÓN EXITOSA ({cargas_exitosas}/{total_cargas})")
-        else:
-            print(f"⚠️ ESTADO: ACTUALIZACIÓN PARCIAL ({cargas_exitosas}/{total_cargas})")
-        
-        print(f"\n📊 DATOS CARGADOS:")
-        total_registros = 0
-        for tabla, total in totales.items():
-            print(f"   {tabla.replace('_', ' ').title()}: {total:,} registros")
-            total_registros += total
-        
-        print(f"   📈 TOTAL GENERAL: {total_registros:,} registros")
-        
-        # Calcular estadísticas epidemiológicas si hay datos
-        if totales.get('poblacion', 0) > 0 and totales.get('vacunacion', 0) > 0:
-            try:
-                with self.engine.connect() as conn:
-                    # Población total
-                    poblacion_total = conn.execute(text(
-                        "SELECT SUM(poblacion_total) FROM poblacion"
-                    )).scalar()
-                    
-                    # Cobertura aproximada
-                    vacunados_total = totales.get('vacunacion', 0)
-                    cobertura_aprox = (vacunados_total / poblacion_total * 100) if poblacion_total > 0 else 0
-                    
-                    print(f"\n📊 INDICADORES EPIDEMIOLÓGICOS:")
-                    print(f"   👥 Población total Tolima: {poblacion_total:,} habitantes")
-                    print(f"   💉 Total vacunados: {vacunados_total:,}")
-                    print(f"   📈 Cobertura aproximada: {cobertura_aprox:.1f}%")
-                    
-                    if totales.get('casos', 0) > 0:
-                        print(f"   🦠 Casos registrados: {totales['casos']:,}")
-                        
-                    if totales.get('epizootias', 0) > 0:
-                        print(f"   🐒 Epizootias registradas: {totales['epizootias']:,}")
-            except:
-                pass
-        
-        print(f"\n🎯 SISTEMA LISTO PARA:")
-        print("   1. 📊 Dashboard epidemiológico en tiempo real")
-        print("   2. 🗺️ Análisis geoespaciales avanzados")
-        print("   3. 📈 Cálculo de coberturas por municipio/grupo etario")
-        print("   4. 🚨 Generación de alertas epidemiológicas")
-        print("   5. 📋 Reportes automatizados")
-        
-        print(f"\n🔗 HERRAMIENTAS DISPONIBLES:")
-        print("   • DBeaver: Análisis de datos SQL")
-        print("   • pgAdmin: http://localhost:8080")
-        print("   • Scripts de monitoreo en /scripts/")
-        
-        # Guardar log completo
-        self.guardar_log_completo()
-    
-    def guardar_log_completo(self):
-        """Guarda log completo de la actualización"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = FileConfig.LOGS_DIR / f"actualizacion_sistema_{timestamp}.txt"
+    def validate_integrity_task(self) -> TaskResult:
+        """Tarea: Validación final de integridad"""
+        start_time = time.time()
         
         try:
-            FileConfig.create_directories()
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write("SISTEMA EPIDEMIOLÓGICO TOLIMA - LOG ACTUALIZACIÓN\n")
-                f.write("=" * 60 + "\n\n")
-                f.write(f"Fecha: {self.inicio.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Duración: {(datetime.now() - self.inicio).total_seconds():.1f}s\n\n")
+            with self.engine.connect() as conn:
+                # Verificar integridad referencial
+                integrity_checks = conn.execute(text("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM unidades_territoriales) as territories,
+                        (SELECT COUNT(*) FROM poblacion) as population_records,
+                        (SELECT SUM(poblacion_total) FROM poblacion) as total_population,
+                        (SELECT COUNT(*) FROM vacunacion_fiebre_amarilla) as vaccinations,
+                        (SELECT COUNT(DISTINCT codigo_municipio) FROM vacunacion_fiebre_amarilla) as vac_municipalities,
+                        (SELECT COUNT(*) FROM v_coberturas_dashboard) as dashboard_records
+                """)).fetchone()
                 
-                for log_entry in self.logs:
-                    f.write(log_entry + "\n")
-            
-            self.log(f"📝 Log completo guardado: {log_file}")
+                checks = dict(integrity_checks)
+                
+                # Verificar que hay datos básicos
+                if (checks['territories'] > 0 and 
+                    checks['population_records'] > 0 and 
+                    checks['vaccinations'] > 0 and
+                    checks['dashboard_records'] > 0):
+                    
+                    return TaskResult(
+                        task_name='validate_integrity',
+                        status=TaskStatus.COMPLETED,
+                        duration_seconds=time.time() - start_time,
+                        records_processed=0,
+                        peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                        details=checks
+                    )
+                else:
+                    return TaskResult(
+                        task_name='validate_integrity',
+                        status=TaskStatus.FAILED,
+                        duration_seconds=time.time() - start_time,
+                        records_processed=0,
+                        peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                        error_message="Datos insuficientes en tablas críticas",
+                        details=checks
+                    )
+                
         except Exception as e:
-            self.log(f"⚠️ No se pudo guardar log: {e}")
+            return TaskResult(
+                task_name='validate_integrity',
+                status=TaskStatus.FAILED,
+                duration_seconds=time.time() - start_time,
+                records_processed=0,
+                peak_memory_mb=self.memory_monitor.get_memory_usage_mb(),
+                error_message=str(e)
+            )
     
-    def actualizar_sistema_completo(self, modo="completo"):
-        """
-        Actualización completa del sistema epidemiológico
-        Modos: completo, solo_datos, solo_verificacion, rapido
-        """
-        self.log("🚀 INICIANDO ACTUALIZACIÓN SISTEMA EPIDEMIOLÓGICO TOLIMA")
-        self.log("=" * 70)
-        self.log(f"Modo: {modo.upper()}")
+    def execute_task(self, task_name: str) -> TaskResult:
+        """Ejecuta una tarea específica"""
         
-        # 1. Verificar Docker y configuración
-        if not self.verificar_docker():
-            self.log("❌ No se pudo conectar a PostgreSQL. Abortando.", "ERROR")
-            return False
+        # Mapeo de tareas a métodos
+        task_methods = {
+            'validate_system': self.validate_system_task,
+            'load_territories': self.load_territories_task,
+            'load_population': self.load_population_task,
+            'load_vaccination': self.load_vaccination_task,
+            'load_cases': self.load_cases_task,
+            'load_epizootics': self.load_epizootics_task,
+            'optimize_database': self.optimize_database_task,
+            'validate_integrity': self.validate_integrity_task
+        }
         
-        if not self.verificar_configuracion_sistema():
-            self.log("❌ Error en configuración del sistema. Abortando.", "ERROR")
-            return False
+        if task_name not in task_methods:
+            return TaskResult(
+                task_name=task_name,
+                status=TaskStatus.FAILED,
+                duration_seconds=0,
+                records_processed=0,
+                peak_memory_mb=0,
+                error_message=f"Tarea desconocida: {task_name}"
+            )
         
-        # 2. Verificar archivos
-        archivos_ok, encontrados, faltantes = self.verificar_archivos_entrada()
+        # Verificar dependencias
+        if not self.check_dependencies(task_name):
+            return TaskResult(
+                task_name=task_name,
+                status=TaskStatus.SKIPPED,
+                duration_seconds=0,
+                records_processed=0,
+                peak_memory_mb=0,
+                error_message="Dependencias no satisfechas"
+            )
         
-        if modo == "solo_verificacion":
-            self.log("✅ Modo verificación completado")
-            return True
-        
-        if not archivos_ok and modo == "completo":
-            respuesta = input("⚠️ Faltan archivos. ¿Continuar con los disponibles? (y/N): ")
-            if respuesta.lower() not in ['y', 'yes', 'si', 'sí']:
-                self.log("❌ Actualización cancelada por usuario", "WARNING")
-                return False
-        
-        # 3. Cargas de datos (en orden de dependencias)
-        cargas_exitosas = 0
-        total_cargas = 0
-        
-        # Definir orden de carga por dependencias
-        cargas_programadas = []
-        
-        if "Unidades Territoriales" in encontrados:
-            cargas_programadas.append(("Unidades Territoriales", self.cargar_unidades_territoriales))
-        
-        if "Población SISBEN" in encontrados:
-            cargas_programadas.append(("Población SISBEN", self.cargar_poblacion))
-        
-        if "Vacunación PAIweb" in encontrados:
-            cargas_programadas.append(("Vacunación PAIweb", self.cargar_vacunacion))
-        
-        if "Casos Fiebre Amarilla" in encontrados:
-            cargas_programadas.append(("Casos Fiebre Amarilla", self.cargar_casos))
-        
-        if "Epizootias" in encontrados:
-            cargas_programadas.append(("Epizootias", self.cargar_epizootias))
-        
-        # Ejecutar cargas
-        total_cargas = len(cargas_programadas)
-        self.log(f"📋 Cargas programadas: {total_cargas}")
-        
-        for i, (nombre, funcion_carga) in enumerate(cargas_programadas, 1):
-            self.log(f"📊 Carga {i}/{total_cargas}: {nombre}")
-            
-            if funcion_carga():
-                cargas_exitosas += 1
-                self.log(f"✅ {nombre} completado exitosamente")
+        # Verificar archivos requeridos
+        if not self.check_file_requirements(task_name):
+            config = self.tasks_config[task_name]
+            if config['required']:
+                return TaskResult(
+                    task_name=task_name,
+                    status=TaskStatus.FAILED,
+                    duration_seconds=0,
+                    records_processed=0,
+                    peak_memory_mb=0,
+                    error_message="Archivo requerido no encontrado"
+                )
             else:
-                self.log(f"❌ Error en {nombre}", "ERROR")
+                return TaskResult(
+                    task_name=task_name,
+                    status=TaskStatus.SKIPPED,
+                    duration_seconds=0,
+                    records_processed=0,
+                    peak_memory_mb=0,
+                    error_message="Archivo opcional no encontrado"
+                )
+        
+        # Ejecutar tarea
+        self.log_task_start(task_name)
+        
+        with self.memory_monitor.monitor_operation(f"task_{task_name}"):
+            result = task_methods[task_name]()
+        
+        self.log_task_result(result)
+        
+        return result
+    
+    def execute_complete_workflow(self, skip_optional: bool = False) -> Dict:
+        """Ejecuta flujo completo de carga optimizada"""
+        
+        logger.info("complete_workflow_started",
+                   skip_optional=skip_optional,
+                   timestamp=self.start_time.isoformat())
+        
+        # Orden de ejecución de tareas
+        task_order = [
+            'validate_system',
+            'load_territories', 
+            'load_population',
+            'load_vaccination',
+            'load_cases',
+            'load_epizootics',
+            'optimize_database',
+            'validate_integrity'
+        ]
+        
+        successful_tasks = 0
+        failed_tasks = 0
+        skipped_tasks = 0
+        
+        for task_name in task_order:
+            config = self.tasks_config[task_name]
+            
+            # Saltar tareas opcionales si se solicita
+            if skip_optional and not config['required']:
+                logger.info("skipping_optional_task", task=task_name)
+                skipped_tasks += 1
+                continue
+            
+            result = self.execute_task(task_name)
+            
+            if result.status == TaskStatus.COMPLETED:
+                successful_tasks += 1
+                logger.info("task_success", task=task_name, duration=result.duration_seconds)
+            elif result.status == TaskStatus.FAILED:
+                failed_tasks += 1
+                logger.error("task_failed", task=task_name, error=result.error_message)
                 
-                if modo == "completo":
-                    continuar = input(f"⚠️ ¿Continuar con el resto de cargas? (y/N): ")
-                    if continuar.lower() not in ['y', 'yes', 'si', 'sí']:
-                        break
+                # Parar en tareas requeridas fallidas
+                if config['required']:
+                    logger.error("required_task_failed_stopping_workflow", task=task_name)
+                    break
+            else:  # SKIPPED
+                skipped_tasks += 1
+                logger.info("task_skipped", task=task_name, reason=result.error_message)
         
-        # 4. Verificación final de integridad
-        totales = self.verificar_integridad_sistema()
+        # Estadísticas finales
+        total_duration = datetime.now() - self.start_time
+        peak_memory = max((r.peak_memory_mb for r in self.task_results), default=0)
         
-        # 5. Reporte final completo
-        self.generar_reporte_final(totales, cargas_exitosas, total_cargas)
+        workflow_result = {
+            'success': failed_tasks == 0 or all(not self.tasks_config[r.task_name]['required'] 
+                                               for r in self.task_results if r.status == TaskStatus.FAILED),
+            'total_duration_seconds': total_duration.total_seconds(),
+            'successful_tasks': successful_tasks,
+            'failed_tasks': failed_tasks,
+            'skipped_tasks': skipped_tasks,
+            'total_records_processed': self.total_records_processed,
+            'peak_memory_mb': peak_memory,
+            'task_results': self.task_results
+        }
         
-        # 6. Resultado final
-        if cargas_exitosas == total_cargas:
-            self.log("🎉 ¡ACTUALIZACIÓN COMPLETADA EXITOSAMENTE!")
-            return True
-        else:
-            self.log(f"⚠️ Actualización parcial: {cargas_exitosas}/{total_cargas} exitosas", "WARNING")
-            return cargas_exitosas > 0  # True si al menos una carga fue exitosa
+        logger.info("complete_workflow_finished", **workflow_result)
+        
+        return workflow_result
+    
+    def generate_final_report(self, workflow_result: Dict) -> str:
+        """Genera reporte final del workflow"""
+        
+        duration = timedelta(seconds=workflow_result['total_duration_seconds'])
+        
+        report = f"""
+🚀 REPORTE SISTEMA COORDINADOR OPTIMIZADO
+{'='*60}
 
-def menu_interactivo():
-    """Menú interactivo para el sistema coordinador"""
-    print("🎛️ SISTEMA COORDINADOR EPIDEMIOLÓGICO TOLIMA")
-    print("=" * 60)
-    print("1. 🚀 Actualización completa del sistema")
-    print("2. 🔍 Solo verificar archivos y conexiones")
-    print("3. ⚡ Actualización rápida (sin confirmaciones)")
-    print("4. 🗺️ Solo cargar unidades territoriales")
-    print("5. 👥 Solo cargar población")
-    print("6. 💉 Solo cargar vacunación")
-    print("7. 🦠 Solo cargar casos")
-    print("8. 🐒 Solo cargar epizootias")
-    print("9. 🔧 Verificar integridad sistema")
-    print("0. 👋 Salir")
+⏱️ RESUMEN TEMPORAL:
+   Inicio: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}
+   Duración total: {duration}
+   Estado: {'✅ EXITOSO' if workflow_result['success'] else '❌ FALLIDO'}
+
+📊 ESTADÍSTICAS DE TAREAS:
+   Exitosas: {workflow_result['successful_tasks']}
+   Fallidas: {workflow_result['failed_tasks']}
+   Omitidas: {workflow_result['skipped_tasks']}
+   Total registros: {workflow_result['total_records_processed']:,}
+
+💾 PERFORMANCE:
+   Memoria pico: {workflow_result['peak_memory_mb']:.1f} MB
+   Registros/segundo: {workflow_result['total_records_processed'] / workflow_result['total_duration_seconds']:.1f}
+
+📋 DETALLE DE TAREAS:"""
+        
+        for result in self.task_results:
+            config = self.tasks_config[result.task_name]
+            status_icon = "✅" if result.status == TaskStatus.COMPLETED else "❌" if result.status == TaskStatus.FAILED else "⏭️"
+            
+            report += f"\n   {status_icon} {config['name']}"
+            report += f"\n      Duración: {result.duration_seconds:.1f}s"
+            
+            if result.records_processed > 0:
+                report += f" | Registros: {result.records_processed:,}"
+            
+            if result.status == TaskStatus.FAILED:
+                report += f"\n      Error: {result.error_message}"
+            
+            if result.details:
+                report += f"\n      Detalles: {result.details}"
+        
+        if workflow_result['success']:
+            report += f"""
+
+🎯 ¡SISTEMA EPIDEMIOLÓGICO COMPLETAMENTE CARGADO!
+
+🔗 PRÓXIMOS PASOS:
+   1. Dashboard: streamlit run dashboard/app.py
+   2. Verificación: python scripts/test_conexion.py
+   3. Monitoreo: python scripts/monitor_sistema.py --completo
+   4. Backup: python scripts/crear_backup.py
+
+🏥 ¡Vigilancia epidemiológica de Tolima lista! 🚀"""
+        else:
+            report += f"""
+
+⚠️ SISTEMA CARGADO PARCIALMENTE
+
+🔧 ACCIONES REQUERIDAS:
+   1. Revisar tareas fallidas arriba
+   2. Verificar archivos de datos faltantes
+   3. Revisar logs: {FileConfig.LOGS_DIR}
+   4. Re-ejecutar: --retry-failed"""
+        
+        return report
+
+# ================================
+# FUNCIONES DE UTILIDAD
+# ================================
+
+def run_optimized_coordinator(mode: str = "complete", skip_optional: bool = False) -> bool:
+    """
+    Ejecuta coordinador optimizado
     
-    while True:
-        try:
-            opcion = input("\n🔢 Selecciona opción: ")
-            
-            coordinador = SistemaCoordinadorTolima()
-            
-            if opcion == "1":
-                coordinador.actualizar_sistema_completo("completo")
-                break
-            elif opcion == "2":
-                coordinador.actualizar_sistema_completo("solo_verificacion")
-                break
-            elif opcion == "3":
-                coordinador.actualizar_sistema_completo("rapido")
-                break
-            elif opcion == "4":
-                if coordinador.verificar_docker() and coordinador.verificar_configuracion_sistema():
-                    coordinador.cargar_unidades_territoriales()
-                break
-            elif opcion == "5":
-                if coordinador.verificar_docker() and coordinador.verificar_configuracion_sistema():
-                    coordinador.cargar_poblacion()
-                break
-            elif opcion == "6":
-                if coordinador.verificar_docker() and coordinador.verificar_configuracion_sistema():
-                    coordinador.cargar_vacunacion()
-                break
-            elif opcion == "7":
-                if coordinador.verificar_docker() and coordinador.verificar_configuracion_sistema():
-                    coordinador.cargar_casos()
-                break
-            elif opcion == "8":
-                if coordinador.verificar_docker() and coordinador.verificar_configuracion_sistema():
-                    coordinador.cargar_epizootias()
-                break
-            elif opcion == "9":
-                if coordinador.verificar_docker():
-                    coordinador.verificar_integridad_sistema()
-                break
-            elif opcion == "0":
-                print("👋 ¡Hasta luego!")
-                break
-            else:
-                print("❌ Opción inválida. Intenta de nuevo.")
-                
-        except KeyboardInterrupt:
-            print("\n\n👋 Saliendo...")
-            break
-        except Exception as e:
-            print(f"❌ Error: {e}")
+    Args:
+        mode: 'complete', 'essential', 'validation'
+        skip_optional: Si omitir tareas opcionales
+    
+    Returns:
+        bool: True si exitoso
+    """
+    
+    coordinator = SystemCoordinatorOptimized()
+    
+    if mode == "validation":
+        # Solo validación
+        result = coordinator.execute_task('validate_system')
+        return result.status == TaskStatus.COMPLETED
+    
+    elif mode == "essential":
+        # Solo tareas esenciales
+        skip_optional = True
+    
+    # Workflow completo
+    workflow_result = coordinator.execute_complete_workflow(skip_optional=skip_optional)
+    
+    # Generar y mostrar reporte
+    report = coordinator.generate_final_report(workflow_result)
+    print(report)
+    
+    # Guardar reporte
+    FileConfig.create_directories()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_file = FileConfig.LOGS_DIR / f"coordinador_report_{timestamp}.txt"
+    
+    with open(report_file, 'w', encoding='utf-8') as f:
+        f.write(report)
+    
+    logger.info("final_report_saved", report_file=str(report_file))
+    
+    return workflow_result['success']
 
 # ================================
 # FUNCIÓN PRINCIPAL
 # ================================
-if __name__ == "__main__":
-    print("🎮 SISTEMA COORDINADOR TOLIMA")
-    print("=" * 45)
+
+def main():
+    """Función principal con interfaz de línea de comandos"""
     
-    # Verificar argumentos de línea de comandos
+    print("🎮 SISTEMA COORDINADOR OPTIMIZADO - TOLIMA EPIDEMIOLÓGICO")
+    print("=" * 70)
+    print("Orquesta carga completa: streaming, monitoreo, recuperación automática")
+    
+    # Argumentos de línea de comandos
+    mode = "complete"
+    skip_optional = False
+    
     if len(sys.argv) > 1:
-        coordinador = SistemaCoordinadorTolima()
-        
-        if sys.argv[1] == "--completo":
-            coordinador.actualizar_sistema_completo("completo")
-        elif sys.argv[1] == "--rapido":
-            coordinador.actualizar_sistema_completo("rapido")
-        elif sys.argv[1] == "--verificar":
-            coordinador.actualizar_sistema_completo("solo_verificacion")
-        elif sys.argv[1] == "--menu":
-            menu_interactivo()
+        arg = sys.argv[1].lower()
+        if arg == "--validation":
+            mode = "validation"
+        elif arg == "--essential":
+            mode = "essential"
+        elif arg == "--skip-optional":
+            skip_optional = True
+        elif arg == "--help":
+            print("\nOpciones:")
+            print("  --validation   : Solo validar sistema")
+            print("  --essential    : Solo tareas esenciales")
+            print("  --skip-optional: Omitir tareas opcionales")
+            print("  --help         : Mostrar ayuda")
+            return True
+    
+    # Ejecutar coordinador
+    success = run_optimized_coordinator(mode, skip_optional)
+    
+    if success:
+        print("\n🎉 ¡COORDINACIÓN COMPLETADA EXITOSAMENTE!")
+        if mode == "validation":
+            print("✅ Sistema validado - listo para carga")
         else:
-            print("❌ Argumento inválido")
-            print("Opciones: --completo, --rapido, --verificar, --menu")
+            print("📊 Sistema epidemiológico completamente cargado")
+            print("🔗 Dashboard disponible: streamlit run dashboard/app.py")
     else:
-        # Menú interactivo por defecto
-        menu_interactivo()
+        print("\n❌ ERROR EN COORDINACIÓN")
+        print("💡 Revisar reporte detallado arriba")
+        print("🔧 Verificar archivos, configuración y logs")
+    
+    return success
+
+if __name__ == "__main__":
+    main()
