@@ -12,8 +12,8 @@ ARG BUILD_ENV=production
 
 # Metadatos
 LABEL maintainer="Sistema Epidemiológico Tolima"
-LABEL version="2.0"
-LABEL description="Sistema optimizado para vigilancia epidemiológica"
+LABEL version="1.0"
+LABEL description="Sistema para vigilancia epidemiológica"
 
 # Instalar dependencias del sistema para compilación
 RUN apt-get update && apt-get install -y --no-install-recommends \

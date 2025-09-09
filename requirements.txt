@@ -1,42 +1,64 @@
-# requirements-minimal.txt
-# Dependencias MÍNIMAS para Sistema Epidemiológico Tolima V2.0
-# Solo lo esencial para que funcione el sistema básico
+# =============================================
+# Sistema Epidemiológico Tolima - Dependencias Optimizadas
+# Pre-procesamiento local → PostgreSQL → Dashboard Streamlit Cloud
+# =============================================
 
 # =====================================
-# CORE - ABSOLUTAMENTE NECESARIO
+# CORE CRÍTICO - Base de Datos
 # =====================================
-pandas>=2.2.0                  # Procesamiento de datos
-numpy>=1.26.3                  # Operaciones numéricas  
-psycopg2-binary>=2.9.9         # PostgreSQL
-sqlalchemy>=2.0.25             # ORM base de datos
+psycopg2-binary==2.9.9           # PostgreSQL optimizado
+SQLAlchemy==2.0.25               # ORM moderno
+geoalchemy2==0.14.2              # PostGIS integration
 
 # =====================================
-# ARCHIVOS Y FORMATOS
+# PROCESAMIENTO DE DATOS - Performance Crítico
 # =====================================
-openpyxl>=3.1.2                # Excel files
-python-dotenv>=1.0.1           # Variables .env
-python-dateutil>=2.8.2         # Parsing fechas
+pandas==2.2.0                    # Procesamiento de datos
+numpy==1.26.3                    # Operaciones numéricas optimizadas
+openpyxl==3.1.2                  # Excel files (PAIweb, casos)
+python-dateutil==2.8.2           # Parsing fechas robusto
 
 # =====================================
-# GEOESPACIAL BÁSICO
+# GEOESPACIAL OPTIMIZADO
 # =====================================
-geopandas>=0.14.3              # Datos geoespaciales
-shapely>=2.0.2                 # Geometrías
-fiona>=1.9.5                   # I/O geoespacial
+geopandas==0.14.3                # Datos geoespaciales
+shapely==2.0.2                   # Geometrías optimizadas
+fiona>=1.9.5,<2.0                # I/O geoespacial compatible
+pyproj==3.6.1                    # Proyecciones cartográficas
 
 # =====================================
-# UTILIDADES ESENCIALES
+# CONFIGURACIÓN Y VARIABLES
 # =====================================
-tqdm>=4.66.2                   # Progress bars
-schedule>=1.2.0                # Tareas programadas
-jinja2>=3.1.3                  # Templates HTML
+python-dotenv==1.0.1             # Variables entorno
+structlog==23.2.0                # Logging estructurado
+tqdm==4.66.2                     # Progress bars
 
 # =====================================
-# TOTAL: 11 dependencias core
+# UTILIDADES SISTEMA
 # =====================================
+schedule==1.2.0                  # Tareas programadas
+psutil==5.9.8                    # Monitoreo sistema
+pathlib2==2.3.7; python_version<"3.6"  # Compatibilidad paths
 
-# INSTALACIÓN RÁPIDA:
-# pip install -r requirements-minimal.txt
+# =====================================
+# DESARROLLO Y TESTING (Opcional)
+# =====================================
+pytest==7.4.4                    # Testing framework
+black==23.12.1                   # Code formatting
+flake8==7.0.0                    # Linting
 
-# Para instalar SOLO lo mínimo sin dependencias opcionales:
-# pip install --no-deps pandas numpy psycopg2-binary sqlalchemy openpyxl python-dotenv geopandas
+# =====================================
+# INSTALACIÓN RÁPIDA
+# =====================================
+# Instalación completa:
+# pip install -r requirements.txt
+
+# Instalación solo core (mínima):
+# pip install psycopg2-binary SQLAlchemy pandas geopandas python-dotenv
+
+# =====================================
+# COMPATIBILIDAD
+# =====================================
+# Python >= 3.8
+# PostgreSQL >= 12
+# PostGIS >= 3.0

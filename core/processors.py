@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 core/processors.py - Procesadores Optimizados para Archivos Grandes
-PERFORMANCE CRÍTICO: Streaming de 203MB población + 67.5MB vacunación
+CRÍTICO: Streaming 203MB población + 67.5MB vacunación sin colapso memoria
 """
 
 import pandas as pd
@@ -17,10 +17,13 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 import time
 import gc
+import sys
 
-# Importar configuración optimizada
+# Añadir path para imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from config import (
-    DatabaseConfig, FileConfig, LoadingConfig,
+    DatabaseConfig, FileConfig,
     divipola_cache, clasificar_grupo_etario, 
     calcular_edad_en_meses, limpiar_fecha_robusta,
     determinar_ubicacion_urbano_rural
@@ -33,9 +36,9 @@ logger = structlog.get_logger()
 # ================================
 
 class MemoryMonitor:
-    """Monitor de memoria para prevenir desbordamientos"""
+    """Monitor de memoria para prevenir colapsos en archivos grandes"""
     
-    def __init__(self, max_memory_mb: int = LoadingConfig.MAX_MEMORY_USAGE_MB):
+    def __init__(self, max_memory_mb: int = 512):
         self.max_memory_mb = max_memory_mb
         self.process = psutil.Process()
         self.initial_memory = self.get_memory_usage_mb()
@@ -76,9 +79,7 @@ class MemoryMonitor:
             if self.check_memory_limit():
                 logger.warning("memory_limit_exceeded", 
                              operation=operation_name,
-                             current_memory_mb=round(self.get_memory_usage_mb(), 2),
-                             limit_mb=self.max_memory_mb)
-                # Forzar garbage collection
+                             current_memory_mb=round(self.get_memory_usage_mb(), 2))
                 gc.collect()
         
         finally:
@@ -88,15 +89,14 @@ class MemoryMonitor:
             logger.info("operation_completed",
                        operation=operation_name,
                        duration_seconds=round(duration, 2),
-                       peak_memory_mb=round(end_memory, 2),
-                       memory_delta_mb=round(end_memory - start_memory, 2))
+                       peak_memory_mb=round(end_memory, 2))
 
 # ================================
 # PROCESADOR BASE ABSTRACTO
 # ================================
 
 class BaseStreamProcessor(ABC):
-    """Procesador base optimizado para streaming de archivos grandes"""
+    """Procesador base para streaming de archivos grandes"""
     
     def __init__(self, file_path: Path, chunk_size: int = 10000):
         self.file_path = file_path
@@ -108,12 +108,12 @@ class BaseStreamProcessor(ABC):
         
     @abstractmethod
     def get_column_mapping(self) -> Dict[str, Any]:
-        """Implementar mapeo de columnas específico por tipo de archivo"""
+        """Mapeo de columnas específico por tipo de archivo"""
         pass
     
     @abstractmethod
     def process_chunk(self, chunk: pd.DataFrame) -> pd.DataFrame:
-        """Implementar procesamiento específico por chunk"""
+        """Procesamiento específico por chunk"""
         pass
     
     @abstractmethod
@@ -132,20 +132,21 @@ class BaseStreamProcessor(ABC):
         
         try:
             if self.file_path.suffix.lower() == '.csv':
+                # Optimización CSV
                 chunk_iter = pd.read_csv(
                     self.file_path,
                     chunksize=self.chunk_size,
-                    dtype=str,  # Leer todo como string inicialmente
+                    dtype=str,
                     low_memory=True,
-                    engine='c'  # Engine C más rápido
+                    engine='c'
                 )
             
             elif self.file_path.suffix.lower() in ['.xlsx', '.xls']:
-                # Para Excel, necesitamos estrategia diferente
+                # Optimización Excel
                 chunk_iter = self._read_excel_chunks()
             
             else:
-                raise ValueError(f"Formato de archivo no soportado: {self.file_path.suffix}")
+                raise ValueError(f"Formato no soportado: {self.file_path.suffix}")
             
             chunk_number = 0
             for chunk in chunk_iter:
@@ -153,40 +154,31 @@ class BaseStreamProcessor(ABC):
                 
                 logger.debug("chunk_loaded",
                            chunk_number=chunk_number,
-                           chunk_size=len(chunk),
-                           memory_mb=round(self.memory_monitor.get_memory_usage_mb(), 2))
+                           chunk_size=len(chunk))
                 
                 yield chunk
                 
-                # Verificar memoria después de cada chunk
                 if self.memory_monitor.check_memory_limit():
-                    logger.warning("memory_limit_during_reading", chunk_number=chunk_number)
+                    logger.warning("memory_limit_during_reading")
                     gc.collect()
         
         except Exception as e:
-            logger.error("file_reading_failed", 
-                        file_path=str(self.file_path),
-                        error=str(e))
+            logger.error("file_reading_failed", error=str(e))
             raise
     
     def _read_excel_chunks(self) -> Iterator[pd.DataFrame]:
         """Lectura optimizada de Excel en chunks"""
         try:
-            # Leer Excel completo pero procesarlo en chunks
             df = pd.read_excel(self.file_path, dtype=str)
-            
             total_rows = len(df)
-            logger.info("excel_loaded_for_chunking", 
-                       total_rows=total_rows,
-                       memory_mb=round(self.memory_monitor.get_memory_usage_mb(), 2))
             
-            # Dividir en chunks
+            logger.info("excel_loaded_for_chunking", total_rows=total_rows)
+            
             for start_idx in range(0, total_rows, self.chunk_size):
                 end_idx = min(start_idx + self.chunk_size, total_rows)
                 chunk = df.iloc[start_idx:end_idx].copy()
                 yield chunk
                 
-            # Liberar memoria del DataFrame completo
             del df
             gc.collect()
             
@@ -194,28 +186,12 @@ class BaseStreamProcessor(ABC):
             logger.error("excel_chunking_failed", error=str(e))
             raise
     
-    def validate_chunk(self, chunk: pd.DataFrame) -> pd.DataFrame:
-        """Validaciones básicas del chunk"""
-        if chunk.empty:
-            logger.warning("empty_chunk_detected")
-            return chunk
-        
-        # Log estadísticas del chunk
-        logger.debug("chunk_validation",
-                    rows=len(chunk),
-                    columns=len(chunk.columns),
-                    null_percentage=round(chunk.isnull().sum().sum() / (len(chunk) * len(chunk.columns)) * 100, 2))
-        
-        return chunk
-    
     def save_chunk_to_db(self, processed_chunk: pd.DataFrame, is_first_chunk: bool = False):
         """Guarda chunk procesado a base de datos"""
         if processed_chunk.empty:
-            logger.warning("skipping_empty_processed_chunk")
             return
         
         try:
-            # Determinar si hacer append o replace
             if_exists = 'replace' if is_first_chunk else 'append'
             
             processed_chunk.to_sql(
@@ -223,7 +199,7 @@ class BaseStreamProcessor(ABC):
                 self.engine,
                 if_exists=if_exists,
                 index=False,
-                method='multi',  # Inserción optimizada
+                method='multi',
                 chunksize=1000
             )
             
@@ -232,15 +208,11 @@ class BaseStreamProcessor(ABC):
             logger.debug("chunk_saved_to_db",
                         table=self.get_table_name(),
                         rows_saved=len(processed_chunk),
-                        total_processed=self.processed_records,
-                        if_exists=if_exists)
+                        total_processed=self.processed_records)
             
         except Exception as e:
             self.error_records += len(processed_chunk)
-            logger.error("chunk_save_failed",
-                        table=self.get_table_name(),
-                        rows_failed=len(processed_chunk),
-                        error=str(e))
+            logger.error("chunk_save_failed", error=str(e))
             raise
     
     def process_file_streaming(self) -> Dict[str, Any]:
@@ -251,39 +223,27 @@ class BaseStreamProcessor(ABC):
             
             logger.info("streaming_process_started",
                        file_path=str(self.file_path),
-                       chunk_size=self.chunk_size,
                        table=self.get_table_name())
             
             is_first_chunk = True
             
             try:
                 for chunk in self.read_file_chunks():
-                    
-                    # Validar chunk
-                    validated_chunk = self.validate_chunk(chunk)
-                    
-                    if validated_chunk.empty:
-                        continue
-                    
-                    # Procesar chunk específico
-                    processed_chunk = self.process_chunk(validated_chunk)
+                    # Procesar chunk
+                    processed_chunk = self.process_chunk(chunk)
                     
                     if not processed_chunk.empty:
-                        # Guardar a BD
                         self.save_chunk_to_db(processed_chunk, is_first_chunk)
                         is_first_chunk = False
                     
-                    # Log progreso
-                    if self.processed_records % (self.chunk_size * 5) == 0:  # Cada 5 chunks
+                    # Log progreso cada 5 chunks
+                    if self.processed_records % (self.chunk_size * 5) == 0:
                         logger.info("streaming_progress",
-                                   processed_records=self.processed_records,
-                                   error_records=self.error_records,
-                                   memory_mb=round(self.memory_monitor.get_memory_usage_mb(), 2))
+                                   processed_records=self.processed_records)
                 
                 # Estadísticas finales
                 duration = time.time() - start_time
                 
-                # Verificar total en BD
                 with self.engine.connect() as conn:
                     total_in_db = conn.execute(text(f"SELECT COUNT(*) FROM {self.get_table_name()}")).scalar()
                 
@@ -301,11 +261,7 @@ class BaseStreamProcessor(ABC):
                 return result
                 
             except Exception as e:
-                logger.error("streaming_process_failed",
-                           file_path=str(self.file_path),
-                           processed_records=self.processed_records,
-                           error=str(e))
-                
+                logger.error("streaming_process_failed", error=str(e))
                 return {
                     'success': False,
                     'error': str(e),
@@ -314,25 +270,27 @@ class BaseStreamProcessor(ABC):
                 }
 
 # ================================
-# PROCESADOR ESPECÍFICO: POBLACIÓN (203MB)
+# PROCESADOR POBLACIÓN (203MB)
 # ================================
 
 class PopulationStreamProcessor(BaseStreamProcessor):
-    """Procesador optimizado para archivo de población de 203MB"""
+    """Procesador optimizado para población SISBEN 203MB"""
     
-    def __init__(self, file_path: Path = FileConfig.POBLACION_FILE):
-        super().__init__(file_path, LoadingConfig.POPULATION_CHUNK_SIZE)
+    def __init__(self, file_path: Path = None):
+        if file_path is None:
+            file_path = FileConfig.POBLACION_FILE
+        super().__init__(file_path, chunk_size=10000)
         
-        # Mapeo específico de población
+        # Mapeo específico población (CSV sin headers)
         self.column_mapping = {
-            1: 'codigo_municipio',    # col_1
-            2: 'municipio',           # col_2  
-            6: 'corregimiento',       # col_6
-            8: 'vereda',              # col_8
-            10: 'barrio',             # col_10
-            16: 'tipo_documento',     # col_16
-            17: 'documento',          # col_17
-            18: 'fecha_nacimiento'    # col_18
+            1: 'codigo_municipio',
+            2: 'municipio',
+            6: 'corregimiento',
+            8: 'vereda',
+            10: 'barrio',
+            16: 'tipo_documento',
+            17: 'documento',
+            18: 'fecha_nacimiento'
         }
     
     def get_column_mapping(self) -> Dict[str, Any]:
@@ -342,14 +300,14 @@ class PopulationStreamProcessor(BaseStreamProcessor):
         return "poblacion"
     
     def process_chunk(self, chunk: pd.DataFrame) -> pd.DataFrame:
-        """Procesamiento optimizado de chunk de población"""
+        """Procesamiento optimizado chunk población"""
         
         try:
-            # Renombrar columnas (CSV sin headers)
-            if chunk.columns[0] == 0:  # Si son índices numéricos
+            # Renombrar columnas CSV sin headers
+            if chunk.columns[0] == 0:
                 chunk.columns = [f"col_{i}" for i in range(len(chunk.columns))]
             
-            # Mapear solo columnas necesarias
+            # Mapear columnas necesarias
             mapped_cols = {}
             for col_idx, col_name in self.column_mapping.items():
                 col_key = f"col_{col_idx}"
@@ -359,7 +317,7 @@ class PopulationStreamProcessor(BaseStreamProcessor):
             chunk = chunk.rename(columns=mapped_cols)
             chunk = chunk[list(mapped_cols.values())].copy()
             
-            # Limpiar y validar fechas de nacimiento
+            # Limpiar fechas nacimiento
             chunk['fecha_nacimiento'] = chunk['fecha_nacimiento'].apply(limpiar_fecha_robusta)
             chunk = chunk.dropna(subset=['fecha_nacimiento'])
             
@@ -368,26 +326,19 @@ class PopulationStreamProcessor(BaseStreamProcessor):
             
             # Calcular edad con fecha actual
             fecha_actual = date.today()
-            edad_data = chunk['fecha_nacimiento'].apply(
+            chunk['edad_meses'] = chunk['fecha_nacimiento'].apply(
                 lambda x: calcular_edad_en_meses(x, fecha_actual) if pd.notna(x) else None
             )
-            
-            chunk['edad_meses'] = edad_data
             chunk['edad_anos'] = chunk['edad_meses'] / 12
             
             # Filtrar edades válidas
-            chunk = chunk[
-                (chunk['edad_anos'] >= 0) & 
-                (chunk['edad_anos'] <= 90)
-            ]
+            chunk = chunk[(chunk['edad_anos'] >= 0) & (chunk['edad_anos'] <= 90)]
             
             if chunk.empty:
                 return chunk
             
             # Clasificar grupos etarios
             chunk['grupo_etario'] = chunk['edad_meses'].apply(clasificar_grupo_etario)
-            
-            # Filtrar solo grupos válidos
             chunk = chunk[chunk['grupo_etario'] != 'Sin datos']
             
             if chunk.empty:
@@ -400,27 +351,25 @@ class PopulationStreamProcessor(BaseStreamProcessor):
                 ), axis=1
             )
             
-            # Procesar códigos DIVIPOLA
+            # Validar códigos municipales Tolima
             chunk['codigo_municipio'] = chunk['codigo_municipio'].astype(str).str.zfill(5)
-            
-            # Validar códigos Tolima
             chunk = chunk[chunk['codigo_municipio'].str.startswith('73')]
             
             if chunk.empty:
                 return chunk
             
-            # Eliminar duplicados por documento + tipo
+            # Eliminar duplicados
             chunk['clave_documento'] = chunk['tipo_documento'].astype(str) + '_' + chunk['documento'].astype(str)
             chunk = chunk.drop_duplicates(subset=['clave_documento'], keep='first')
             
             # Agregar por dimensiones epidemiológicas
             result = chunk.groupby([
                 'codigo_municipio',
-                'tipo_ubicacion', 
+                'tipo_ubicacion',
                 'grupo_etario'
             ]).size().reset_index(name='poblacion_total')
             
-            # Añadir metadatos
+            # Metadatos
             result['año'] = 2024
             result['fuente'] = 'SISBEN'
             result['created_at'] = datetime.now()
@@ -428,22 +377,22 @@ class PopulationStreamProcessor(BaseStreamProcessor):
             return result
             
         except Exception as e:
-            logger.error("population_chunk_processing_failed", 
-                        chunk_size=len(chunk),
-                        error=str(e))
+            logger.error("population_chunk_processing_failed", error=str(e))
             return pd.DataFrame()
 
 # ================================
-# PROCESADOR ESPECÍFICO: VACUNACIÓN (67.5MB)
+# PROCESADOR VACUNACIÓN (67.5MB)
 # ================================
 
 class VaccinationStreamProcessor(BaseStreamProcessor):
-    """Procesador optimizado para archivo de vacunación de 67.5MB"""
+    """Procesador optimizado para vacunación PAIweb 67.5MB"""
     
-    def __init__(self, file_path: Path = FileConfig.PAIWEB_FILE):
-        super().__init__(file_path, LoadingConfig.VACCINATION_CHUNK_SIZE)
+    def __init__(self, file_path: Path = None):
+        if file_path is None:
+            file_path = FileConfig.PAIWEB_FILE
+        super().__init__(file_path, chunk_size=5000)
         
-        # Mapeo específico de vacunación
+        # Mapeo específico vacunación
         self.column_mapping = {
             'Departamento': 'departamento',
             'Municipio': 'municipio',
@@ -460,7 +409,7 @@ class VaccinationStreamProcessor(BaseStreamProcessor):
         return "vacunacion_fiebre_amarilla"
     
     def process_chunk(self, chunk: pd.DataFrame) -> pd.DataFrame:
-        """Procesamiento optimizado de chunk de vacunación"""
+        """Procesamiento optimizado chunk vacunación"""
         
         try:
             # Mapear columnas
@@ -475,7 +424,6 @@ class VaccinationStreamProcessor(BaseStreamProcessor):
             if 'fecha_nacimiento' in chunk.columns:
                 chunk['fecha_nacimiento'] = chunk['fecha_nacimiento'].apply(limpiar_fecha_robusta)
             
-            # Filtrar registros con fechas válidas
             chunk = chunk.dropna(subset=['fecha_aplicacion', 'fecha_nacimiento'])
             
             if chunk.empty:
@@ -489,10 +437,7 @@ class VaccinationStreamProcessor(BaseStreamProcessor):
             chunk['edad_anos'] = chunk['edad_meses'] / 12
             
             # Filtrar edades válidas
-            chunk = chunk[
-                (chunk['edad_anos'] >= 0) & 
-                (chunk['edad_anos'] <= 90)
-            ]
+            chunk = chunk[(chunk['edad_anos'] >= 0) & (chunk['edad_anos'] <= 90)]
             
             if chunk.empty:
                 return chunk
@@ -500,32 +445,27 @@ class VaccinationStreamProcessor(BaseStreamProcessor):
             # Clasificar grupos etarios
             chunk['grupo_etario'] = chunk['edad_meses'].apply(clasificar_grupo_etario)
             
-            # Normalizar municipios
+            # Mapear códigos municipales
             if 'municipio' in chunk.columns:
                 chunk['codigo_municipio'] = chunk['municipio'].apply(
                     lambda x: divipola_cache.search_municipio_code(x)
                 )
             
             # Normalizar ubicación
-            def normalizar_ubicacion(tipo):
-                if pd.isna(tipo):
-                    return "Urbano"
-                tipo_str = str(tipo).strip().lower()
-                return "Rural" if any(k in tipo_str for k in ['rural', 'vereda']) else "Urbano"
-            
             if 'tipo_ubicacion' in chunk.columns:
-                chunk['tipo_ubicacion'] = chunk['tipo_ubicacion'].apply(normalizar_ubicacion)
+                chunk['tipo_ubicacion'] = chunk['tipo_ubicacion'].apply(
+                    lambda x: "Rural" if pd.notna(x) and any(k in str(x).lower() for k in ['rural', 'vereda']) else "Urbano"
+                )
             
-            # Calcular campos temporales
+            # Campos temporales
             if 'fecha_aplicacion' in chunk.columns:
                 chunk['año'] = chunk['fecha_aplicacion'].dt.year
                 chunk['mes'] = chunk['fecha_aplicacion'].dt.month
                 chunk['semana_epidemiologica'] = chunk['fecha_aplicacion'].dt.isocalendar().week
             
-            # Validaciones finales
+            # Filtros finales
             chunk = chunk.dropna(subset=['municipio', 'fecha_aplicacion'])
             
-            # Filtrar fechas coherentes
             fecha_min = date(2020, 1, 1)
             fecha_max = date.today()
             chunk = chunk[
@@ -533,33 +473,31 @@ class VaccinationStreamProcessor(BaseStreamProcessor):
                 (chunk['fecha_aplicacion'] <= fecha_max)
             ]
             
-            # Eliminar fecha nacimiento para anonimización
+            # Anonimizar (eliminar fecha nacimiento)
             if 'fecha_nacimiento' in chunk.columns:
                 chunk = chunk.drop(columns=['fecha_nacimiento'])
             
-            # Añadir metadatos
+            # Metadatos
             chunk['fecha_carga'] = datetime.now()
             chunk['fuente'] = 'PAIweb'
             
             return chunk
             
         except Exception as e:
-            logger.error("vaccination_chunk_processing_failed",
-                        chunk_size=len(chunk),
-                        error=str(e))
+            logger.error("vaccination_chunk_processing_failed", error=str(e))
             return pd.DataFrame()
 
 # ================================
-# FUNCIÓN DE UTILIDAD PRINCIPAL
+# FUNCIÓN PRINCIPAL DE UTILIDAD
 # ================================
 
 def process_large_file_optimized(file_type: str, file_path: Optional[Path] = None) -> Dict[str, Any]:
     """
-    Procesa archivos grandes de manera optimizada según el tipo
+    Procesa archivos grandes optimizado según tipo
     
     Args:
         file_type: 'population' o 'vaccination'
-        file_path: Ruta opcional del archivo (usa por defecto si no se especifica)
+        file_path: Ruta opcional del archivo
     
     Returns:
         Diccionario con resultados del procesamiento
@@ -583,7 +521,7 @@ def process_large_file_optimized(file_type: str, file_path: Optional[Path] = Non
     return processor.process_file_streaming()
 
 # ================================
-# TESTING Y VALIDACIÓN
+# TESTING
 # ================================
 
 if __name__ == "__main__":

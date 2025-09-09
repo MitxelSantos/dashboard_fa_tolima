@@ -1,640 +1,421 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-cargar_casos.py - Casos Fiebre Amarilla → PostgreSQL
-Procesamiento completo de casos con mapeo veredal desde .gpkg
-CORREGIDO: Municipio procedencia (nmun_proce), edad con fecha actual, mapeos locales
+cargar_casos.py - Casos Fiebre Amarilla → PostgreSQL OPTIMIZADO
+LIMPIO: Municipio procedencia (nmun_proce), edad con fecha actual, mapeos locales
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine, text
-import warnings
-import os
+import structlog
+import sys
+from pathlib import Path
 
-# Importar configuración centralizada
+# Añadir path para imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from config import (
-    DATABASE_URL,
+    DatabaseConfig, FileConfig,
     clasificar_grupo_etario, calcular_edad_en_meses,
-    limpiar_fecha_robusta, cargar_primera_hoja_excel,
-    buscar_codigo_vereda, normalizar_nombre_territorio
+    limpiar_fecha_robusta, buscar_codigo_vereda, 
+    buscar_codigo_municipio, normalizar_nombre_territorio
 )
 
-warnings.filterwarnings('ignore')
+logger = structlog.get_logger()
 
-# ================================
-# MAPEO LOCAL CASOS EXCEL (Solo para este script)
-# ================================
+# =======================
+# MAPEO LOCAL CASOS EXCEL
+# =======================
 MAPEO_CASOS_EXCEL = {
+    # Identificación temporal
     'fecha_notificacion': 'fec_not',
     'semana_epidemiologica': 'semana',
-    'codigo_prestador': 'cod_pre',
+    'fecha_inicio_sintomas': 'ini_sin_',
+    'fecha_consulta': 'fec_con_',
+    
+    # Identificación personal
     'primer_nombre': 'pri_nom_',
-    'segundo_nombre': 'seg_nom_',
     'primer_apellido': 'pri_ape_',
-    'segundo_apellido': 'seg_ape_',
     'tipo_documento': 'tip_ide_',
     'numero_documento': 'num_ide_',
     'edad': 'edad_',
     'sexo': 'sexo_',
-    'area_residencia': 'area_',
-    'vereda_infeccion': 'vereda_',  # CORREGIDO: vereda donde se infectó
-    'ocupacion': 'ocupacion_',
-    'tipo_seguridad_social': 'tip_ss_',
-    'codigo_aseguradora': 'cod_ase_',
-    'pertenencia_etnica': 'per_etn_',
-    'estrato': 'estrato_',
-    'grupo_discapacidad': 'gp_discapacidad',
-    'grupo_desplazado': 'gp_desplazado',
-    'grupo_migrante': 'gp_migrante',
-    'grupo_carcelario': 'gp_carcela',
-    'grupo_gestante': 'gp_gestante',
-    'semanas_gestacion': 'sem_ges_',
-    'grupo_indigena': 'gp_indigena',
-    'poblacion_icbf': 'gp_pobicbf',
-    'madres_comunitarias': 'gp_mad_com',
-    'grupo_desmovilizados': 'gp_desmovim',
-    'grupo_psiquiatricos': 'gp_psiquiatr',
-    'victimas_violencia': 'gp_vic_viol',
-    'grupo_otros': 'gp_otros',
-    'fuente_informacion': 'fuente_',
-    'fecha_consulta': 'fec_con_',
-    'inicio_sintomas': 'ini_sin_',
-    'tipo_caso': 'tip_cas_',
-    'paciente_hospitalizado': 'pac_hos_',
-    'fecha_hospitalizacion': 'fec_hos_',
+    'fecha_nacimiento': 'fecha_nto_',
+    
+    # Geolocalización CORREGIDA
+    'municipio_procedencia': 'nmun_proce',    # DONDE SE INFECTÓ (CRÍTICO)
+    'vereda_infeccion': 'vereda_',            # Vereda donde se infectó
+    'municipio_residencia': 'nmun_resi',      # Donde vive
+    'municipio_notificacion': 'nmun_notif',   # Donde se notificó
+    
+    # Datos clínicos críticos
+    'clasificacion_inicial': 'tip_cas_',
     'condicion_final': 'con_fin_',
     'fecha_defuncion': 'fec_def_',
-    'telefono': 'telefono_',
-    'fecha_nacimiento': 'fecha_nto_',
-    'certificado_defuncion': 'cer_def_',
-    'carnet_vacunacion': 'carne_vacu',
-    'fecha_vacunacion': 'fec_fa1_',
+    'hospitalizado': 'pac_hos_',
+    'fecha_hospitalizacion': 'fec_hos_',
+    
+    # Antecedentes vacunación
+    'vacunado_previo': 'carne_vacu',
+    'fecha_vacunacion_previa': 'fec_fa1_',
+    
+    # Síntomas principales (críticos para vigilancia)
     'fiebre': 'fiebre',
-    'mialgias': 'malgias',
-    'artralgias': 'artralgias_',
-    'cefalea': 'cefalea',
-    'vomitos': 'vomito',
     'ictericia': 'ictericia',
-    'sangrado': 'sfaget',
-    'oliguria': 'oliguria',
-    'shock': 'shock',
-    'bradicardia': 'bradicardi',
-    'falla_renal': 'falla_renal',
-    'falla_hepatica': 'falla_hepa',
-    'hepatomegalia': 'hepatomega',
-    'hemoptisis': 'hemoptisis',
-    'hiperemia': 'hipiremia',
-    'hematemesis': 'hematemesi',
-    'petequias': 'petequias',
-    'metrorragia': 'metrorragi',
-    'melenas': 'melenas',
-    'equimosis': 'equimosis',
-    'epistaxis': 'epistaxis',
-    'hematuria': 'hematuria',
-    'caso_familiar': 'cas_fam',
-    'codigo_municipio_infeccion': 'codmuninfe',
-    'nombre_upgd': 'nom_upgd',
-    'pais_procedencia': 'npais_procen',
-    'departamento_procedencia': 'ndep_proce',
-    'municipio_procedencia': 'nmun_proce',  # CORREGIDO: municipio donde se infectó
-    'pais_residencia': 'npais_resi',
-    'departamento_residencia': 'ndep_resi',
-    'municipio_residencia': 'nmun_resi',
-    'departamento_notificacion': 'ndep_notif',
-    'municipio_notificacion': 'nmun_notif'
+    'sangrado': 'sfaget'
 }
 
-def procesar_casos_fiebre_amarilla(archivo_excel):
+def procesar_casos_fiebre_amarilla_optimizado(archivo_excel: Path) -> pd.DataFrame:
     """
-    Procesa casos de fiebre amarilla desde Excel con mapeo completo
-    CORREGIDO: Municipio procedencia, edad con fecha actual
+    Procesa casos de fiebre amarilla con mapeo optimizado
+    LIMPIO: Municipio procedencia, edad actual, validaciones robustas
     """
-    print("🦠 PROCESANDO CASOS FIEBRE AMARILLA")
-    print("=" * 40)
+    logger.info("casos_processing_started", file_path=str(archivo_excel))
     
     inicio = datetime.now()
     
     try:
-        # 1. CARGAR ARCHIVO EXCEL (primera hoja)
-        print(f"📂 Cargando: {archivo_excel}")
+        # 1. CARGAR ARCHIVO EXCEL
+        if not archivo_excel.exists():
+            raise FileNotFoundError(f"Archivo no encontrado: {archivo_excel}")
         
-        df, nombre_hoja = cargar_primera_hoja_excel(archivo_excel)
-        if df is None:
-            return None
-            
-        print(f"📊 Registros iniciales: {len(df):,}")
-        print(f"📋 Columnas originales: {len(df.columns)}")
+        # Leer primera hoja Excel
+        df = pd.read_excel(archivo_excel, sheet_name=0, dtype=str)
+        logger.info("casos_file_loaded", 
+                   initial_records=len(df),
+                   columns_count=len(df.columns))
         
-        # 2. MAPEAR TODAS LAS COLUMNAS DISPONIBLES (mapeo local)
-        print("🔄 Mapeando columnas disponibles...")
-        
+        # 2. MAPEAR COLUMNAS DISPONIBLES
         columnas_mapeadas = {}
-        columnas_no_encontradas = []
+        columnas_faltantes = []
         
-        # Usar mapeo local específico para casos
         for nombre_bd, nombre_excel in MAPEO_CASOS_EXCEL.items():
             if nombre_excel in df.columns:
                 columnas_mapeadas[nombre_excel] = nombre_bd
-                print(f"   ✅ {nombre_excel} → {nombre_bd}")
             else:
-                columnas_no_encontradas.append(nombre_excel)
+                columnas_faltantes.append(nombre_excel)
         
-        # Renombrar columnas encontradas
+        if columnas_faltantes:
+            logger.warning("missing_columns", missing_columns=columnas_faltantes[:5])
+        
+        # Renombrar y filtrar columnas
         df = df.rename(columns=columnas_mapeadas)
-        
-        # Mantener todas las columnas mapeadas (no filtrar)
         columnas_finales = list(columnas_mapeadas.values())
         df = df[columnas_finales].copy()
         
-        print(f"✅ {len(columnas_finales)} columnas mapeadas")
-        if columnas_no_encontradas:
-            print(f"⚠️ {len(columnas_no_encontradas)} columnas no encontradas")
+        logger.info("columns_mapped", mapped_columns=len(columnas_finales))
         
-        # 3. LIMPIAR Y VALIDAR FECHAS CRÍTICAS
-        print("📅 Procesando fechas...")
+        # 3. PROCESAR FECHAS CRÍTICAS
+        logger.info("processing_dates")
         
-        # Fecha de notificación
-        if 'fecha_notificacion' in df.columns:
-            df['fecha_notificacion'] = df['fecha_notificacion'].apply(limpiar_fecha_robusta)
-            print(f"   Fecha notificación procesada")
-        
-        # Fecha inicio síntomas (CRÍTICA para epidemiología)
-        if 'inicio_sintomas' in df.columns:
-            df['inicio_sintomas'] = df['inicio_sintomas'].apply(limpiar_fecha_robusta)
-            print(f"   Fecha inicio síntomas procesada")
-        
-        # Fecha de nacimiento (para cálculo edad)
-        if 'fecha_nacimiento' in df.columns:
-            df['fecha_nacimiento'] = df['fecha_nacimiento'].apply(limpiar_fecha_robusta)
-            print(f"   Fecha nacimiento procesada")
-        
-        # Otras fechas importantes
-        fechas_adicionales = [
-            'fecha_consulta', 'fecha_hospitalizacion', 'fecha_defuncion',
-            'fecha_vacunacion'
+        campos_fecha = [
+            'fecha_notificacion', 'fecha_inicio_sintomas', 'fecha_consulta',
+            'fecha_defuncion', 'fecha_hospitalizacion', 'fecha_vacunacion_previa',
+            'fecha_nacimiento'
         ]
         
-        for campo_fecha in fechas_adicionales:
-            if campo_fecha in df.columns:
-                df[campo_fecha] = df[campo_fecha].apply(limpiar_fecha_robusta)
+        for campo in campos_fecha:
+            if campo in df.columns:
+                df[campo] = df[campo].apply(limpiar_fecha_robusta)
+        
+        # Filtrar registros sin fecha notificación
+        df = df.dropna(subset=['fecha_notificacion'])
+        logger.info("date_filtering", records_after_date_filter=len(df))
         
         # 4. CALCULAR EDAD CON FECHA ACTUAL (CORREGIDO)
-        print("👤 Calculando edad con fecha ACTUAL como referencia...")
+        logger.info("calculating_age_with_current_date")
         
         if 'fecha_nacimiento' in df.columns:
-            fecha_referencia = date.today()  # CORREGIDO: Siempre fecha actual
+            fecha_actual = date.today()
             
-            def calcular_edad_caso_actual(fecha_nac):
-                """Calcula edad usando SOLO fecha actual como referencia"""
-                if pd.isna(fecha_nac):
-                    return None, None
-                
-                # SIEMPRE usar fecha actual, NO fecha inicio síntomas
-                edad_meses = calcular_edad_en_meses(fecha_nac, fecha_referencia)
-                if edad_meses is not None:
-                    edad_anos = edad_meses / 12
-                    return edad_anos, edad_meses
-                
-                return None, None
-            
-            # Calcular edad con fecha actual únicamente
-            edades_data = df['fecha_nacimiento'].apply(calcular_edad_caso_actual)
-            
-            df['edad_calculada_anos'] = [x[0] if x else None for x in edades_data]
-            df['edad_calculada_meses'] = [x[1] if x else None for x in edades_data]
+            # Calcular edad usando SOLO fecha actual
+            df['edad_meses_calculada'] = df['fecha_nacimiento'].apply(
+                lambda x: calcular_edad_en_meses(x, fecha_actual) if pd.notna(x) else None
+            )
+            df['edad_anos_calculada'] = df['edad_meses_calculada'] / 12
             
             # Usar edad calculada o edad del archivo
-            df['edad_final'] = df['edad_calculada_anos'].fillna(df.get('edad', np.nan))
+            df['edad_anos'] = df['edad_anos_calculada'].fillna(
+                pd.to_numeric(df.get('edad', np.nan), errors='coerce')
+            )
             
-            print(f"   ✅ Edad calculada con FECHA ACTUAL como referencia")
-            print(f"   📅 Fecha referencia: {fecha_referencia}")
+            logger.info("age_calculated", reference_date=str(fecha_actual))
         else:
-            # Si no hay fecha nacimiento, usar edad directa del archivo
-            df['edad_final'] = df.get('edad', np.nan)
-            print(f"   ⚠️ Usando edad directa del archivo (sin fecha nacimiento)")
+            df['edad_anos'] = pd.to_numeric(df.get('edad', np.nan), errors='coerce')
         
         # 5. CLASIFICAR GRUPOS ETARIOS
-        print("👥 Clasificando grupos etarios...")
+        logger.info("classifying_age_groups")
         
-        # Convertir edad a meses para clasificación
-        df['edad_meses_clasificacion'] = df['edad_final'] * 12
-        df['grupo_etario'] = df['edad_meses_clasificacion'].apply(clasificar_grupo_etario)
+        df['edad_meses_para_clasificacion'] = df['edad_anos'] * 12
+        df['grupo_etario'] = df['edad_meses_para_clasificacion'].apply(clasificar_grupo_etario)
         
-        grupos_dist = df['grupo_etario'].value_counts()
-        print(f"   Distribución grupos etarios:")
-        for grupo, cantidad in grupos_dist.head().items():
-            print(f"     {grupo}: {cantidad:,}")
+        # 6. PROCESAR GEOLOCALIZACIÓN CON MUNICIPIO PROCEDENCIA
+        logger.info("processing_geolocation_with_procedencia")
         
-        # 6. MAPEAR CÓDIGO DIVIPOLA VEREDAL CON MUNICIPIO PROCEDENCIA
-        print("🗺️ Mapeando códigos DIVIPOLA veredales con municipio procedencia...")
-        
-        if 'vereda_infeccion' in df.columns:
-            # CORREGIDO: Usar municipio_procedencia como contexto (donde se infectó)
-            municipio_contexto = df.get('municipio_procedencia')
-            
-            def buscar_codigo_vereda_caso(vereda, municipio_proc):
-                """Busca código veredal usando municipio procedencia como contexto"""
-                if pd.isna(vereda):
-                    return None
-                return buscar_codigo_vereda(vereda, municipio_proc)
-            
-            # Aplicar búsqueda veredal con contexto de municipio procedencia
-            if municipio_contexto is not None:
-                df['codigo_divipola_vereda'] = df.apply(
-                    lambda row: buscar_codigo_vereda_caso(
-                        row.get('vereda_infeccion'),
-                        row.get('municipio_procedencia')  # CORREGIDO: usar procedencia
-                    ), axis=1
-                )
-            else:
-                df['codigo_divipola_vereda'] = df['vereda_infeccion'].apply(
-                    lambda x: buscar_codigo_vereda_caso(x, None)
-                )
-            
-            codigos_veredales_asignados = df['codigo_divipola_vereda'].notna().sum()
-            print(f"   ✅ Códigos veredales asignados: {codigos_veredales_asignados:,}")
-            print(f"   🗺️ Contexto: municipio procedencia (donde se infectó)")
-        
-        # 7. NORMALIZAR CAMPOS CATEGÓRICOS
-        print("🔧 Normalizando campos categóricos...")
-        
-        # Normalizar nombres de municipios (procedencia, residencia, notificación)
-        campos_municipio = [
-            'municipio_procedencia',     # DONDE SE INFECTÓ (PRINCIPAL)
-            'municipio_residencia',      # Donde vive
-            'municipio_notificacion'     # Donde se notificó
-        ]
-        
-        for campo in campos_municipio:
-            if campo in df.columns:
-                df[campo] = df[campo].apply(
+        # Normalizar nombres municipios
+        for campo_mun in ['municipio_procedencia', 'municipio_residencia', 'municipio_notificacion']:
+            if campo_mun in df.columns:
+                df[campo_mun] = df[campo_mun].apply(
                     lambda x: normalizar_nombre_territorio(x).title() if pd.notna(x) else None
                 )
         
-        # Normalizar condición final (1=Vivo, 2=Muerto)
+        # Asignar códigos municipales
+        if 'municipio_procedencia' in df.columns:
+            df['codigo_municipio_procedencia'] = df['municipio_procedencia'].apply(buscar_codigo_municipio)
+        
+        if 'municipio_residencia' in df.columns:
+            df['codigo_municipio_residencia'] = df['municipio_residencia'].apply(buscar_codigo_municipio)
+        
+        if 'municipio_notificacion' in df.columns:
+            df['codigo_municipio_notificacion'] = df['municipio_notificacion'].apply(buscar_codigo_municipio)
+        
+        # CRÍTICO: Mapear vereda con contexto municipio procedencia
+        if 'vereda_infeccion' in df.columns and 'municipio_procedencia' in df.columns:
+            logger.info("mapping_veredas_with_procedencia_context")
+            
+            df['codigo_vereda_infeccion'] = df.apply(
+                lambda row: buscar_codigo_vereda(
+                    row.get('vereda_infeccion'),
+                    row.get('municipio_procedencia')  # Contexto municipal donde se infectó
+                ), axis=1
+            )
+            
+            veredas_mapeadas = df['codigo_vereda_infeccion'].notna().sum()
+            logger.info("veredas_mapped", count=veredas_mapeadas)
+        
+        # 7. NORMALIZAR CAMPOS CATEGÓRICOS
+        logger.info("normalizing_categorical_fields")
+        
+        # Normalizar condición final
         if 'condicion_final' in df.columns:
-            df['condicion_final_texto'] = df['condicion_final'].map({
-                1: 'Vivo',
-                2: 'Muerto'
+            df['condicion_final'] = df['condicion_final'].map({
+                1: 'Vivo', '1': 'Vivo',
+                2: 'Muerto', '2': 'Muerto'
             }).fillna(df['condicion_final'])
         
-        # Normalizar carnet vacunación (1=Sí, 2=No)  
-        if 'carnet_vacunacion' in df.columns:
-            df['vacunado_previo'] = df['carnet_vacunacion'].map({
-                1: 'Sí',
-                2: 'No'
-            }).fillna(df['carnet_vacunacion'])
+        # Normalizar vacunación previa
+        if 'vacunado_previo' in df.columns:
+            df['vacunado_previo'] = df['vacunado_previo'].map({
+                1: True, '1': True,
+                2: False, '2': False
+            }).fillna(None)
         
-        # Normalizar hospitalización (1=Sí, 2=No)
-        if 'paciente_hospitalizado' in df.columns:
-            df['hospitalizado'] = df['paciente_hospitalizado'].map({
-                1: 'Sí',
-                2: 'No'
-            }).fillna(df['paciente_hospitalizado'])
+        # Normalizar hospitalización
+        if 'hospitalizado' in df.columns:
+            df['hospitalizado'] = df['hospitalizado'].map({
+                1: True, '1': True,
+                2: False, '2': False
+            }).fillna(None)
         
-        # 8. PROCESAR SÍNTOMAS (1=Sí, 2=No para cada síntoma)
-        print("🤒 Procesando síntomas...")
-        
-        sintomas_campos = [
-            'fiebre', 'mialgias', 'artralgias', 'cefalea', 'vomitos', 'ictericia',
-            'sangrado', 'oliguria', 'shock', 'bradicardia', 'falla_renal',
-            'falla_hepatica', 'hepatomegalia', 'hemoptisis', 'hiperemia',
-            'hematemesis', 'petequias', 'metrorragia', 'melenas', 'equimosis',
-            'epistaxis', 'hematuria'
-        ]
-        
-        sintomas_presentes = []
-        for sintoma in sintomas_campos:
+        # Normalizar síntomas (1=Sí, 2=No)
+        sintomas = ['fiebre', 'ictericia', 'sangrado']
+        for sintoma in sintomas:
             if sintoma in df.columns:
-                sintomas_presentes.append(sintoma)
-                # Convertir 1/2 a Sí/No para mejor legibilidad
-                df[f"{sintoma}_texto"] = df[sintoma].map({1: 'Sí', 2: 'No'}).fillna(df[sintoma])
+                df[sintoma] = df[sintoma].map({
+                    1: True, '1': True,
+                    2: False, '2': False
+                }).fillna(None)
         
-        print(f"   ✅ {len(sintomas_presentes)} síntomas procesados")
-        
-        # 9. VALIDACIONES Y FILTROS
-        print("🔍 Aplicando validaciones...")
+        # 8. VALIDACIONES FINALES
+        logger.info("applying_final_validations")
         
         registros_iniciales = len(df)
         
-        # Filtrar fechas de notificación válidas
-        if 'fecha_notificacion' in df.columns:
-            df = df.dropna(subset=['fecha_notificacion'])
+        # Filtrar fechas coherentes
+        fecha_min = date(2020, 1, 1)
+        fecha_max = date.today()
         
-        # Filtrar fechas coherentes (2020 en adelante)
-        fecha_minima = date(2020, 1, 1)
-        fecha_maxima = date.today()
-        
-        if 'fecha_notificacion' in df.columns:
-            df = df[
-                (df['fecha_notificacion'] >= fecha_minima) &
-                (df['fecha_notificacion'] <= fecha_maxima)
-            ]
+        df = df[
+            (df['fecha_notificacion'] >= fecha_min) &
+            (df['fecha_notificacion'] <= fecha_max)
+        ]
         
         # Filtrar edades válidas
-        if 'edad_final' in df.columns:
-            df = df[
-                (df['edad_final'].isna()) | 
-                ((df['edad_final'] >= 0) & (df['edad_final'] <= 120))
-            ]
+        df = df[
+            (df['edad_anos'].isna()) | 
+            ((df['edad_anos'] >= 0) & (df['edad_anos'] <= 120))
+        ]
         
-        print(f"   Registros después validaciones: {len(df):,}")
-        print(f"   Registros filtrados: {registros_iniciales - len(df):,}")
+        logger.info("final_validation", 
+                   records_before=registros_iniciales,
+                   records_after=len(df),
+                   filtered_count=registros_iniciales - len(df))
         
-        # 10. CAMPOS CALCULADOS AUTOMÁTICOS
-        print("⚙️ Generando campos calculados...")
-        
-        # Año y semana epidemiológica desde fecha notificación
+        # 9. CAMPOS CALCULADOS FINALES
         if 'fecha_notificacion' in df.columns:
             df['año'] = df['fecha_notificacion'].dt.year
             df['semana_epidemiologica'] = df['fecha_notificacion'].dt.isocalendar().week
-        elif 'inicio_sintomas' in df.columns:
-            # Usar fecha inicio síntomas como alternativa
-            df['año'] = df['inicio_sintomas'].dt.year
-            df['semana_epidemiologica'] = df['inicio_sintomas'].dt.isocalendar().week
         
-        # 11. ESTADÍSTICAS PRE-CARGA
-        print(f"\n📊 ESTADÍSTICAS CASOS PROCESADOS:")
-        print(f"   Total casos: {len(df):,}")
+        # Metadatos
+        df['created_at'] = datetime.now()
+        df['updated_at'] = datetime.now()
         
-        # CORREGIDO: Usar municipio_procedencia (donde se infectó)
-        if 'municipio_procedencia' in df.columns:
-            municipios_casos = df['municipio_procedencia'].nunique()
-            print(f"   Municipios con casos (procedencia/infección): {municipios_casos}")
-            
-            # Top municipios con más casos (por procedencia)
-            top_municipios = df['municipio_procedencia'].value_counts().head(5)
-            print(f"   Top municipios procedencia (infección):")
-            for municipio, casos in top_municipios.items():
-                print(f"     {municipio}: {casos:,} casos")
+        # 10. ESTADÍSTICAS FINALES
+        duracion = datetime.now() - inicio
         
-        if 'año' in df.columns:
-            años_casos = sorted(df['año'].dropna().unique())
-            print(f"   Años con casos: {años_casos}")
-        
-        if 'condicion_final_texto' in df.columns:
-            condiciones = df['condicion_final_texto'].value_counts()
-            print(f"   Condición final:")
-            for condicion, cantidad in condiciones.items():
-                print(f"     {condicion}: {cantidad:,}")
-        
-        if 'vacunado_previo' in df.columns:
-            vacunacion = df['vacunado_previo'].value_counts()
-            print(f"   Vacunación previa:")
-            for estado, cantidad in vacunacion.items():
-                print(f"     {estado}: {cantidad:,}")
-        
-        print("✅ Procesamiento casos completado")
-        print("📅 Edad calculada con fecha actual (CORREGIDO)")
-        print("🗺️ Mapeo veredal con municipio procedencia (CORREGIDO)")
+        logger.info("casos_processing_completed",
+                   final_records=len(df),
+                   duration_seconds=duracion.total_seconds(),
+                   municipalities_procedencia=df['municipio_procedencia'].nunique() if 'municipio_procedencia' in df.columns else 0,
+                   years_span=sorted(df['año'].dropna().unique()) if 'año' in df.columns else [])
         
         return df
         
     except Exception as e:
-        print(f"❌ Error procesando casos: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        logger.error("casos_processing_failed", error=str(e))
+        raise
 
-def cargar_casos_postgresql(df_casos, tabla="casos_fiebre_amarilla"):
+def cargar_casos_postgresql_optimizado(df_casos: pd.DataFrame) -> bool:
     """
-    Carga casos de fiebre amarilla a PostgreSQL
+    Carga casos a PostgreSQL con validaciones optimizadas
     """
     if df_casos is None or len(df_casos) == 0:
-        print("❌ No hay casos para cargar")
+        logger.warning("no_casos_to_load")
         return False
     
-    print(f"\n💾 CARGANDO {len(df_casos):,} CASOS A POSTGRESQL")
-    print("=" * 50)
+    logger.info("casos_loading_to_postgresql", records=len(df_casos))
     
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(DatabaseConfig.get_connection_url())
         
         # Verificar conexión
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        print("✅ Conexión PostgreSQL exitosa")
-        
-        # Añadir metadatos
-        df_casos['created_at'] = datetime.now()
-        df_casos['updated_at'] = datetime.now()
         
         # Cargar datos
         df_casos.to_sql(
-            tabla,
+            'casos_fiebre_amarilla',
             engine,
-            if_exists='replace',  # Reemplazar casos completos
+            if_exists='replace',
             index=False,
-            chunksize=500  # Lotes más pequeños por la complejidad de los datos
+            chunksize=500
         )
         
-        # Verificar carga y estadísticas
+        # Verificar carga y generar estadísticas
         with engine.connect() as conn:
-            total_cargado = conn.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
-            print(f"✅ {total_cargado:,} casos cargados exitosamente")
+            total_cargado = conn.execute(text("SELECT COUNT(*) FROM casos_fiebre_amarilla")).scalar()
             
-            # Estadísticas post-carga
-            stats = pd.read_sql(text(f"""
+            # Estadísticas críticas
+            stats = conn.execute(text("""
                 SELECT 
                     COUNT(DISTINCT municipio_procedencia) as municipios_procedencia,
                     COUNT(DISTINCT año) as años_casos,
-                    COUNT(CASE WHEN condicion_final_texto = 'Muerto' THEN 1 END) as defunciones,
+                    COUNT(*) FILTER (WHERE condicion_final = 'Muerto') as defunciones,
+                    COUNT(*) FILTER (WHERE codigo_vereda_infeccion IS NOT NULL) as con_codigo_veredal,
                     MIN(fecha_notificacion) as fecha_min,
                     MAX(fecha_notificacion) as fecha_max
-                FROM {tabla}
+                FROM casos_fiebre_amarilla
                 WHERE fecha_notificacion IS NOT NULL
-            """), conn)
+            """)).fetchone()
             
-            if len(stats) > 0:
-                s = stats.iloc[0]
-                print(f"📍 Municipios procedencia: {s['municipios_procedencia']}")
-                print(f"📊 Años con casos: {s['años_casos']}")
-                print(f"☠️ Defunciones: {s['defunciones']}")
-                if s['fecha_min'] and s['fecha_max']:
-                    print(f"📅 Período: {s['fecha_min']} a {s['fecha_max']}")
+            if stats:
+                s = dict(stats)
+                logger.info("casos_loading_completed",
+                           total_loaded=total_cargado,
+                           **s)
             
-            # Verificar códigos veredales asignados
-            if 'codigo_divipola_vereda' in df_casos.columns:
-                codigos_veredales = conn.execute(text(f"""
-                    SELECT COUNT(*) FROM {tabla} WHERE codigo_divipola_vereda IS NOT NULL
-                """)).scalar()
-                print(f"🗺️ Casos con código veredal: {codigos_veredales:,}")
-        
         return True
         
     except Exception as e:
-        print(f"❌ Error cargando a PostgreSQL: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("casos_loading_failed", error=str(e))
         return False
 
-def procesar_casos_completo(archivo_excel):
+def procesar_casos_completo(archivo_excel: Path = None) -> bool:
     """
-    Proceso completo: Excel → Procesamiento → PostgreSQL
+    Proceso completo optimizado: Excel → Procesamiento → PostgreSQL
     """
-    print("🦠 PROCESAMIENTO COMPLETO CASOS FIEBRE AMARILLA V2.0")
-    print("=" * 55)
+    logger.info("casos_complete_process_started")
     
-    inicio = datetime.now()
-    print(f"🚀 Iniciando: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
+    if archivo_excel is None:
+        archivo_excel = FileConfig.CASOS_FILE
     
     try:
-        # 1. Verificar archivo
-        if not os.path.exists(archivo_excel):
-            print(f"❌ ERROR: Archivo no encontrado: {archivo_excel}")
+        # 1. Procesar casos
+        df_casos = procesar_casos_fiebre_amarilla_optimizado(archivo_excel)
+        
+        if df_casos is None or len(df_casos) == 0:
+            logger.error("casos_processing_returned_empty")
             return False
         
-        print(f"📂 Archivo: {archivo_excel}")
-        tamaño_mb = os.path.getsize(archivo_excel) / (1024*1024)
-        print(f"📊 Tamaño: {tamaño_mb:.1f} MB")
-        
-        # 2. Procesar casos
-        df_casos = procesar_casos_fiebre_amarilla(archivo_excel)
-        
-        if df_casos is None:
-            print("❌ Error en procesamiento de casos")
-            return False
-        
-        # 3. Cargar a PostgreSQL
-        exito = cargar_casos_postgresql(df_casos)
-        
-        # 4. Resumen final
-        duracion = datetime.now() - inicio
-        print(f"\n{'='*55}")
-        print(" PROCESAMIENTO CASOS COMPLETADO ".center(55))
-        print("=" * 55)
+        # 2. Cargar a PostgreSQL
+        exito = cargar_casos_postgresql_optimizado(df_casos)
         
         if exito:
-            print("🎉 ¡CASOS CARGADOS EXITOSAMENTE!")
-            print(f"📊 {len(df_casos):,} casos procesados")
-            print("📅 Edad calculada con fecha actual (CORREGIDO)")
-            print("🗺️ Mapeo veredal con municipio procedencia (CORREGIDO)")
-            print("🤒 Síntomas y datos epidemiológicos completos")
-            print("📈 Listos para análisis de vigilancia")
-        else:
-            print("⚠️ Procesamiento con errores en carga BD")
-        
-        print(f"⏱️ Tiempo total: {duracion.total_seconds():.1f} segundos")
-        print(f"📅 Finalizado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # 5. Crear backup CSV
-        if exito:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = f"backups/casos_backup_{timestamp}.csv"
+            logger.info("casos_complete_process_successful")
             
-            os.makedirs("backups", exist_ok=True)
+            # 3. Crear backup
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = FileConfig.BACKUPS_DIR / f"casos_backup_{timestamp}.csv"
+            FileConfig.create_directories()
+            
             df_casos.to_csv(backup_file, index=False, encoding='utf-8-sig')
-            print(f"💾 Backup creado: {backup_file}")
+            logger.info("casos_backup_created", backup_file=str(backup_file))
         
         return exito
         
     except Exception as e:
-        print(f"❌ Error crítico: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("casos_complete_process_failed", error=str(e))
         return False
 
-def generar_reporte_casos():
+def generar_reporte_casos() -> bool:
     """
-    Genera reporte epidemiológico de casos cargados
+    Genera reporte epidemiológico de casos
     """
-    print("\n📊 GENERANDO REPORTE EPIDEMIOLÓGICO...")
+    logger.info("generating_casos_report")
     
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(DatabaseConfig.get_connection_url())
         
         with engine.connect() as conn:
-            # Resumen general
-            resumen = pd.read_sql(text("""
+            # Resumen epidemiológico
+            resumen = conn.execute(text("""
                 SELECT 
                     COUNT(*) as total_casos,
                     COUNT(DISTINCT municipio_procedencia) as municipios_afectados,
-                    COUNT(CASE WHEN condicion_final_texto = 'Muerto' THEN 1 END) as defunciones,
-                    COUNT(CASE WHEN vacunado_previo = 'Sí' THEN 1 END) as vacunados_previos,
+                    COUNT(*) FILTER (WHERE condicion_final = 'Muerto') as defunciones,
+                    COUNT(*) FILTER (WHERE vacunado_previo = true) as vacunados_previos,
                     MIN(fecha_notificacion) as primer_caso,
                     MAX(fecha_notificacion) as ultimo_caso
                 FROM casos_fiebre_amarilla
                 WHERE fecha_notificacion IS NOT NULL
-            """), conn)
+            """)).fetchone()
             
-            if len(resumen) > 0:
-                r = resumen.iloc[0]
-                print(f"📋 RESUMEN EPIDEMIOLÓGICO:")
-                print(f"   Total casos: {r['total_casos']:,}")
-                print(f"   Municipios procedencia: {r['municipios_afectados']}")
-                print(f"   Defunciones: {r['defunciones']} (Letalidad: {(r['defunciones']/r['total_casos']*100):.1f}%)")
-                print(f"   Vacunados previos: {r['vacunados_previos']}")
-                if r['primer_caso'] and r['ultimo_caso']:
-                    print(f"   Período: {r['primer_caso']} a {r['ultimo_caso']}")
-            
-            # Casos por municipio procedencia
-            casos_municipio = pd.read_sql(text("""
-                SELECT municipio_procedencia, COUNT(*) as casos
-                FROM casos_fiebre_amarilla
-                WHERE municipio_procedencia IS NOT NULL
-                GROUP BY municipio_procedencia
-                ORDER BY casos DESC
-                LIMIT 10
-            """), conn)
-            
-            if len(casos_municipio) > 0:
-                print(f"\n🏆 TOP 10 MUNICIPIOS PROCEDENCIA (INFECCIÓN):")
-                for _, row in casos_municipio.iterrows():
-                    print(f"   {row['municipio_procedencia']}: {row['casos']} casos")
-            
-            # Casos por grupo etario
-            casos_edad = pd.read_sql(text("""
-                SELECT grupo_etario, COUNT(*) as casos
-                FROM casos_fiebre_amarilla
-                WHERE grupo_etario IS NOT NULL
-                GROUP BY grupo_etario
-                ORDER BY casos DESC
-            """), conn)
-            
-            if len(casos_edad) > 0:
-                print(f"\n👥 CASOS POR GRUPO ETARIO:")
-                for _, row in casos_edad.iterrows():
-                    print(f"   {row['grupo_etario']}: {row['casos']} casos")
+            if resumen:
+                r = dict(resumen)
+                letalidad = (r['defunciones'] / r['total_casos'] * 100) if r['total_casos'] > 0 else 0
+                
+                logger.info("casos_epidemiological_report",
+                           **r,
+                           letalidad_porcentaje=round(letalidad, 1))
         
         return True
         
     except Exception as e:
-        print(f"❌ Error generando reporte: {e}")
+        logger.error("casos_report_failed", error=str(e))
         return False
 
 # ================================
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🦠 PROCESADOR CASOS FIEBRE AMARILLA V2.0")
-    print("=" * 40)
+    print("🦠 CARGA CASOS FIEBRE AMARILLA OPTIMIZADA")
+    print("=" * 50)
     
-    # Archivo por defecto
-    archivo_default = "data/casos.xlsx"
+    archivo_default = FileConfig.CASOS_FILE
     
-    # Verificar archivo
-    if not os.path.exists(archivo_default):
-        print(f"❌ ERROR: No se encuentra '{archivo_default}'")
-        print("\n💡 Opciones:")
-        print("1. Colocar archivo de casos en 'data/casos.xlsx'")
-        print("2. Modificar variable archivo_default")
-        print("3. Llamar: procesar_casos_completo('ruta/archivo.xlsx')")
+    if not archivo_default.exists():
+        print(f"❌ ERROR: Archivo no encontrado: {archivo_default}")
+        print("💡 Colocar archivo en data/casos.xlsx")
+        sys.exit(1)
+    
+    # Ejecutar proceso completo
+    exito = procesar_casos_completo(archivo_default)
+    
+    if exito:
+        print("✅ Casos cargados exitosamente")
+        generar_reporte_casos()
+        print("\n🎯 Casos listos para vigilancia epidemiológica")
     else:
-        # Ejecutar procesamiento completo
-        exito = procesar_casos_completo(archivo_default)
-        
-        if exito:
-            print("\n📊 Generando reporte epidemiológico...")
-            generar_reporte_casos()
-            
-            print("\n🎯 PRÓXIMOS PASOS:")
-            print("1. Revisar datos en DBeaver: tabla 'casos_fiebre_amarilla'")
-            print("2. Analizar distribución temporal y espacial")
-            print("3. Correlacionar con datos de vacunación")
-            print("4. Generar alertas epidemiológicas")
-            print("5. ¡Vigilancia epidemiológica completa! 🚀")
-        else:
-            print("\n❌ Procesamiento fallido. Revisar errores.")
+        print("❌ Error en carga de casos")

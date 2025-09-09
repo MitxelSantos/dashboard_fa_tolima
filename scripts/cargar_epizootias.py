@@ -1,96 +1,99 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-cargar_epizootias.py - Epizootias → PostgreSQL
-Procesamiento de epizootias (muertes animales) con mapeo veredal desde .gpkg
-CORREGIDO: Contexto municipal para veredas, mapeos locales, sin campos calculados
+cargar_epizootias.py - Epizootias → PostgreSQL OPTIMIZADO
+LIMPIO: Contexto municipal, datos geoespaciales, sin campos calculados
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from sqlalchemy import create_engine, text
-import warnings
-import os
+import structlog
+import sys
+from pathlib import Path
 
-# Importar configuración centralizada
+# Añadir path para imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from config import (
-    DATABASE_URL,
-    limpiar_fecha_robusta, cargar_primera_hoja_excel,
-    buscar_codigo_vereda, buscar_codigo_municipio,
-    normalizar_nombre_territorio
+    DatabaseConfig, FileConfig,
+    limpiar_fecha_robusta, buscar_codigo_vereda, 
+    buscar_codigo_municipio, normalizar_nombre_territorio
 )
 
-warnings.filterwarnings('ignore')
+logger = structlog.get_logger()
 
 # ================================
-# MAPEO LOCAL EPIZOOTIAS EXCEL (Solo para este script)
+# MAPEO LOCAL EPIZOOTIAS EXCEL (LIMPIO)
 # ================================
 MAPEO_EPIZOOTIAS_EXCEL = {
+    # Identificación territorial
     'municipio': 'MUNICIPIO',
     'vereda': 'VEREDA',
+    
+    # Datos temporales
     'fecha_recoleccion': 'FECHA_RECOLECCION',
+    'fecha_notificacion': 'FECHA_NOTIFICACION',
+    'fecha_envio_muestra': 'FECHA_ENVIO_MUESTRA',
+    'fecha_resultado_pcr': 'FECHA_RESULTADO_PCR',
+    'fecha_resultado_histopatologia': 'FECHA_RESULTADO_HISTOPATOLOGIA',
+    
+    # Información del evento
     'informante': 'INFORMANTE',
     'descripcion': 'DESCRIPCION',
-    'fecha_notificacion': 'FECHA_NOTIFICACION',
     'especie': 'ESPECIE',
+    
+    # Geolocalización
     'latitud': 'LATITUD',
     'longitud': 'LONGITUD',
-    'fecha_envio_muestra': 'FECHA_ENVIO_MUESTRA',
+    
+    # Resultados laboratorio
     'resultado_pcr': 'RESULTADO_PCR',
-    'fecha_resultado_pcr': 'FECHA_RESULTADO_PCR',
-    'resultado_histopatologia': 'RESULTADO_HISTOPATOLOGIA',
-    'fecha_resultado_histopatologia': 'FECHA_RESULTADO_HISTOPATOLOGIA'
+    'resultado_histopatologia': 'RESULTADO_HISTOPATOLOGIA'
 }
 
-def procesar_epizootias(archivo_excel):
+def procesar_epizootias_optimizado(archivo_excel: Path) -> pd.DataFrame:
     """
-    Procesa epizootias desde Excel con mapeo veredal completo
-    CORREGIDO: Contexto municipal para búsqueda veredal, sin campos calculados
+    Procesa epizootias con contexto municipal y geolocalización
+    LIMPIO: Datos originales preservados, validaciones robustas
     """
-    print("🐒 PROCESANDO EPIZOOTIAS")
-    print("=" * 30)
+    logger.info("epizootias_processing_started", file_path=str(archivo_excel))
     
     inicio = datetime.now()
     
     try:
-        # 1. CARGAR ARCHIVO EXCEL (primera hoja)
-        print(f"📂 Cargando: {archivo_excel}")
+        # 1. CARGAR ARCHIVO EXCEL
+        if not archivo_excel.exists():
+            raise FileNotFoundError(f"Archivo no encontrado: {archivo_excel}")
         
-        df, nombre_hoja = cargar_primera_hoja_excel(archivo_excel)
-        if df is None:
-            return None
-            
-        print(f"📊 Registros iniciales: {len(df):,}")
-        print(f"📋 Columnas originales: {list(df.columns)}")
+        df = pd.read_excel(archivo_excel, sheet_name=0, dtype=str)
+        logger.info("epizootias_file_loaded",
+                   initial_records=len(df),
+                   columns_available=list(df.columns))
         
-        # 2. MAPEAR COLUMNAS USANDO MAPEO LOCAL ESPECÍFICO
-        print("🔄 Mapeando columnas...")
-        
+        # 2. MAPEAR COLUMNAS DISPONIBLES
         columnas_mapeadas = {}
-        columnas_no_encontradas = []
+        columnas_faltantes = []
         
-        # Usar mapeo local específico para epizootias
         for nombre_bd, nombre_excel in MAPEO_EPIZOOTIAS_EXCEL.items():
             if nombre_excel in df.columns:
                 columnas_mapeadas[nombre_excel] = nombre_bd
-                print(f"   ✅ {nombre_excel} → {nombre_bd}")
             else:
-                columnas_no_encontradas.append(nombre_excel)
-                print(f"   ⚠️ {nombre_excel} → NO ENCONTRADA")
+                columnas_faltantes.append(nombre_excel)
         
-        # Renombrar columnas encontradas
+        if columnas_faltantes:
+            logger.warning("missing_columns", missing_columns=columnas_faltantes)
+        
+        # Renombrar y filtrar columnas
         df = df.rename(columns=columnas_mapeadas)
-        
-        # Mantener todas las columnas mapeadas
         columnas_finales = list(columnas_mapeadas.values())
         df = df[columnas_finales].copy()
         
-        print(f"✅ {len(columnas_finales)} columnas procesadas")
-        print(f"📋 Columnas finales: {list(df.columns)}")
+        logger.info("columns_mapped", mapped_columns=len(columnas_finales))
         
-        # 3. NORMALIZAR MUNICIPIOS Y VEREDAS
-        print("🏙️ Normalizando territorios...")
+        # 3. NORMALIZAR TERRITORIOS
+        logger.info("normalizing_territories")
         
         # Normalizar municipios
         if 'municipio' in df.columns:
@@ -98,7 +101,7 @@ def procesar_epizootias(archivo_excel):
                 lambda x: normalizar_nombre_territorio(x).title() if pd.notna(x) else None
             )
             municipios_unicos = df['municipio'].nunique()
-            print(f"   Municipios únicos: {municipios_unicos}")
+            logger.info("municipalities_normalized", unique_count=municipios_unicos)
         
         # Normalizar veredas
         if 'vereda' in df.columns:
@@ -106,28 +109,22 @@ def procesar_epizootias(archivo_excel):
                 lambda x: normalizar_nombre_territorio(x).title() if pd.notna(x) else None
             )
             veredas_unicas = df['vereda'].nunique()
-            print(f"   Veredas únicas: {veredas_unicas}")
+            logger.info("veredas_normalized", unique_count=veredas_unicas)
         
-        # 4. LIMPIAR Y VALIDAR FECHAS
-        print("📅 Procesando fechas...")
+        # 4. PROCESAR FECHAS
+        logger.info("processing_dates")
         
         campos_fecha = [
             'fecha_recoleccion', 'fecha_notificacion', 'fecha_envio_muestra',
             'fecha_resultado_pcr', 'fecha_resultado_histopatologia'
         ]
         
-        fechas_procesadas = []
         for campo in campos_fecha:
             if campo in df.columns:
                 df[campo] = df[campo].apply(limpiar_fecha_robusta)
-                fechas_nulas = df[campo].isna().sum()
-                print(f"   {campo}: {fechas_nulas:,} nulas")
-                fechas_procesadas.append(campo)
-        
-        print(f"   ✅ {len(fechas_procesadas)} tipos de fecha procesados")
         
         # 5. PROCESAR COORDENADAS GEOGRÁFICAS
-        print("📍 Procesando coordenadas...")
+        logger.info("processing_coordinates")
         
         def limpiar_coordenada(coord_val):
             """Limpia y valida coordenadas"""
@@ -135,7 +132,6 @@ def procesar_epizootias(archivo_excel):
                 return None
             
             try:
-                # Convertir a float, manejando diferentes formatos
                 coord_str = str(coord_val).strip().replace(',', '.')
                 coord_float = float(coord_str)
                 return coord_float
@@ -143,95 +139,78 @@ def procesar_epizootias(archivo_excel):
                 return None
         
         # Limpiar coordenadas
-        coordenadas_procesadas = 0
         if 'latitud' in df.columns:
             df['latitud'] = df['latitud'].apply(limpiar_coordenada)
-            coordenadas_procesadas += 1
             
         if 'longitud' in df.columns:
             df['longitud'] = df['longitud'].apply(limpiar_coordenada)
-            coordenadas_procesadas += 1
         
         # Validar coordenadas para Colombia
         if 'latitud' in df.columns and 'longitud' in df.columns:
-            # Rangos válidos para Colombia
-            lat_validas = df['latitud'].between(-4.2, 12.6, na=True)
-            lon_validas = df['longitud'].between(-81.8, -66.9, na=True)
-            coords_validas = lat_validas & lon_validas
-            
             coords_completas = df[['latitud', 'longitud']].dropna()
-            coords_validas_count = coords_validas.sum()
-            coords_invalidas = len(coords_completas) - coords_validas_count
             
-            print(f"   Coordenadas completas: {len(coords_completas):,}")
-            print(f"   Coordenadas válidas: {coords_validas_count:,}")
-            if coords_invalidas > 0:
-                print(f"   ⚠️ Coordenadas inválidas: {coords_invalidas:,}")
+            # Filtro coordenadas válidas Colombia
+            coordenadas_validas = (
+                (df['latitud'].between(-4.2, 12.6, na=True)) &
+                (df['longitud'].between(-81.8, -66.9, na=True))
+            )
+            
+            coords_validas_count = coordenadas_validas.sum()
+            logger.info("coordinates_validated",
+                       complete_coordinates=len(coords_completas),
+                       valid_coordinates=coords_validas_count)
         
         # 6. ASIGNAR CÓDIGOS DIVIPOLA CON CONTEXTO MUNICIPAL
-        print("🗺️ Asignando códigos DIVIPOLA con contexto municipal...")
+        logger.info("assigning_divipola_codes_with_municipal_context")
         
         # Asignar código municipal
         if 'municipio' in df.columns:
             df['codigo_municipio'] = df['municipio'].apply(buscar_codigo_municipio)
             codigos_municipales = df['codigo_municipio'].notna().sum()
-            print(f"   Códigos municipales: {codigos_municipales:,}")
+            logger.info("municipal_codes_assigned", count=codigos_municipales)
         
-        # CORREGIDO: Asignar código veredal CON CONTEXTO MUNICIPAL
+        # CRÍTICO: Asignar código veredal CON CONTEXTO MUNICIPAL
         if 'vereda' in df.columns and 'municipio' in df.columns:
-            print("   🗺️ Aplicando búsqueda veredal con contexto municipal...")
+            logger.info("mapping_veredas_with_municipal_context")
             
-            def buscar_codigo_vereda_con_contexto(vereda, municipio_ctx):
-                """Busca código veredal usando contexto municipal (CORREGIDO)"""
-                if pd.isna(vereda):
-                    return None
-                # Usar contexto municipal para reducir búsqueda
-                return buscar_codigo_vereda(vereda, municipio_ctx)
-            
-            # Aplicar búsqueda veredal con contexto municipal
-            df['codigo_divipola_vereda'] = df.apply(
-                lambda row: buscar_codigo_vereda_con_contexto(
+            df['codigo_vereda'] = df.apply(
+                lambda row: buscar_codigo_vereda(
                     row.get('vereda'),
-                    row.get('municipio')  # Usar municipio como contexto
+                    row.get('municipio')  # Contexto municipal para reducir búsqueda
                 ), axis=1
             )
             
-            codigos_veredales = df['codigo_divipola_vereda'].notna().sum()
-            print(f"   ✅ Códigos veredales con contexto municipal: {codigos_veredales:,}")
+            codigos_veredales = df['codigo_vereda'].notna().sum()
+            logger.info("vereda_codes_assigned", count=codigos_veredales)
             
-            # Mostrar estadísticas de mapeo por municipio
+            # Estadísticas de mapeo por municipio
             if codigos_veredales > 0:
                 mapeo_stats = df.groupby('municipio').agg({
                     'vereda': 'count',
-                    'codigo_divipola_vereda': 'count'
+                    'codigo_vereda': 'count'
                 }).rename(columns={
                     'vereda': 'total_veredas',
-                    'codigo_divipola_vereda': 'veredas_mapeadas'
+                    'codigo_vereda': 'veredas_mapeadas'
                 })
-                mapeo_stats['porcentaje_mapeo'] = (mapeo_stats['veredas_mapeadas'] / mapeo_stats['total_veredas'] * 100).round(1)
+                mapeo_stats['porcentaje_mapeo'] = (
+                    mapeo_stats['veredas_mapeadas'] / mapeo_stats['total_veredas'] * 100
+                ).round(1)
                 
-                print(f"   📊 Mapeo veredal por municipio:")
-                for municipio, row in mapeo_stats.head(10).iterrows():
-                    if pd.notna(municipio):
-                        print(f"     {municipio}: {row['veredas_mapeadas']}/{row['total_veredas']} ({row['porcentaje_mapeo']}%)")
+                logger.info("vereda_mapping_by_municipality", 
+                           mapping_stats=mapeo_stats.to_dict('index'))
         
         # 7. NORMALIZAR ESPECIES Y RESULTADOS
-        print("🔬 Normalizando especies y resultados...")
+        logger.info("normalizing_species_and_results")
         
         # Normalizar especies
         if 'especie' in df.columns:
             df['especie'] = df['especie'].apply(
                 lambda x: str(x).strip().title() if pd.notna(x) else None
             )
-            especies_unicas = df['especie'].nunique()
-            print(f"   Especies únicas: {especies_unicas}")
             
-            # Mostrar especies más comunes
-            if especies_unicas > 0:
-                top_especies = df['especie'].value_counts().head(3)
-                print(f"   Especies más comunes:")
-                for especie, cantidad in top_especies.items():
-                    print(f"     {especie}: {cantidad:,}")
+            if df['especie'].notna().sum() > 0:
+                especies_comunes = df['especie'].value_counts().head(3)
+                logger.info("common_species", species_counts=especies_comunes.to_dict())
         
         # Normalizar resultados PCR
         if 'resultado_pcr' in df.columns:
@@ -239,391 +218,231 @@ def procesar_epizootias(archivo_excel):
                 lambda x: str(x).strip().upper() if pd.notna(x) else None
             )
             
-            # Estadísticas resultados PCR
             if df['resultado_pcr'].notna().sum() > 0:
                 resultados_pcr = df['resultado_pcr'].value_counts()
-                print(f"   Resultados PCR:")
-                for resultado, cantidad in resultados_pcr.items():
-                    print(f"     {resultado}: {cantidad:,}")
+                logger.info("pcr_results", results_counts=resultados_pcr.to_dict())
         
-        # 8. VALIDACIONES Y FILTROS
-        print("🔍 Aplicando validaciones...")
+        # 8. VALIDACIONES FINALES
+        logger.info("applying_final_validations")
         
         registros_iniciales = len(df)
         
         # Filtrar registros con municipio válido
         if 'municipio' in df.columns:
             df = df.dropna(subset=['municipio'])
-            print(f"   Filtro municipio: {len(df):,} registros")
         
         # Filtrar fechas válidas para recolección
         if 'fecha_recoleccion' in df.columns:
             fecha_min = date(2020, 1, 1)
             fecha_max = date.today()
             
-            # Mantener registros con fecha válida o nula
             df = df[
                 (df['fecha_recoleccion'].isna()) | 
                 ((df['fecha_recoleccion'] >= fecha_min) & 
                  (df['fecha_recoleccion'] <= fecha_max))
             ]
-            print(f"   Filtro fecha: {len(df):,} registros")
         
-        print(f"   Registros excluidos: {registros_iniciales - len(df):,}")
+        logger.info("final_validation",
+                   records_before=registros_iniciales,
+                   records_after=len(df),
+                   filtered_count=registros_iniciales - len(df))
         
-        # 9. MANTENER DATOS ORIGINALES (CORREGIDO - Sin campos calculados)
-        print("⚙️ Manteniendo datos originales...")
-        print("   ✅ No se generan campos calculados - datos originales preservados")
+        # 9. MANTENER DATOS ORIGINALES (SIN CAMPOS CALCULADOS)
+        logger.info("preserving_original_data")
+        
+        # Metadatos únicamente
+        df['created_at'] = datetime.now()
+        df['updated_at'] = datetime.now()
         
         # 10. ESTADÍSTICAS FINALES
-        print(f"\n📊 ESTADÍSTICAS EPIZOOTIAS PROCESADAS:")
-        print(f"   Total registros: {len(df):,}")
+        duracion = datetime.now() - inicio
         
-        if 'municipio' in df.columns:
-            municipios_afectados = df['municipio'].nunique()
-            print(f"   Municipios afectados: {municipios_afectados}")
-            
-            # Top municipios con más epizootias
-            top_municipios = df['municipio'].value_counts().head(5)
-            print(f"   Top municipios:")
-            for municipio, cantidad in top_municipios.items():
-                print(f"     {municipio}: {cantidad:,}")
+        estadisticas = {
+            'final_records': len(df),
+            'duration_seconds': duracion.total_seconds(),
+            'municipalities_affected': df['municipio'].nunique() if 'municipio' in df.columns else 0,
+            'species_reported': df['especie'].nunique() if 'especie' in df.columns else 0,
+            'with_coordinates': len(df[['latitud', 'longitud']].dropna()) if all(col in df.columns for col in ['latitud', 'longitud']) else 0,
+            'pcr_results': df['resultado_pcr'].notna().sum() if 'resultado_pcr' in df.columns else 0
+        }
         
-        if 'especie' in df.columns and df['especie'].notna().sum() > 0:
-            especies_reportadas = df['especie'].nunique()
-            print(f"   Especies reportadas: {especies_reportadas}")
-            
-            especie_comun = df['especie'].value_counts().iloc[0]
-            nombre_especie = df['especie'].value_counts().index[0]
-            print(f"   Especie más afectada: {nombre_especie} ({especie_comun} casos)")
-        
-        # Coordenadas válidas
-        if 'latitud' in df.columns and 'longitud' in df.columns:
-            coords_disponibles = df[['latitud', 'longitud']].dropna()
-            print(f"   Con coordenadas: {len(coords_disponibles):,}")
-        
-        # Resultados de laboratorio
+        # PCR positivos críticos
         if 'resultado_pcr' in df.columns:
-            pcr_procesados = df['resultado_pcr'].notna().sum()
-            print(f"   Resultados PCR: {pcr_procesados:,}")
-            
-            if pcr_procesados > 0:
-                positivos = (df['resultado_pcr'] == 'POSITIVO').sum()
-                if positivos > 0:
-                    print(f"   ⚠️ PCR Positivos: {positivos:,}")
+            positivos = (df['resultado_pcr'] == 'POSITIVO').sum()
+            if positivos > 0:
+                estadisticas['pcr_positivos_criticos'] = positivos
         
-        # Mapeo veredal exitoso
-        if 'codigo_divipola_vereda' in df.columns:
-            veredas_mapeadas = df['codigo_divipola_vereda'].notna().sum()
-            print(f"   🗺️ Veredas con código DIVIPOLA: {veredas_mapeadas:,}")
-        
-        print("✅ Procesamiento epizootias completado")
-        print("🗺️ Códigos veredales asignados con contexto municipal (CORREGIDO)")
+        logger.info("epizootias_processing_completed", **estadisticas)
         
         return df
         
     except Exception as e:
-        print(f"❌ Error procesando epizootias: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        logger.error("epizootias_processing_failed", error=str(e))
+        raise
 
-def cargar_epizootias_postgresql(df_epizootias, tabla="epizootias"):
+def cargar_epizootias_postgresql_optimizado(df_epizootias: pd.DataFrame) -> bool:
     """
-    Carga epizootias a PostgreSQL con soporte geoespacial
+    Carga epizootias a PostgreSQL con soporte geoespacial optimizado
     """
     if df_epizootias is None or len(df_epizootias) == 0:
-        print("❌ No hay epizootias para cargar")
+        logger.warning("no_epizootias_to_load")
         return False
     
-    print(f"\n💾 CARGANDO {len(df_epizootias):,} EPIZOOTIAS A POSTGRESQL")
-    print("=" * 55)
+    logger.info("epizootias_loading_to_postgresql", records=len(df_epizootias))
     
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(DatabaseConfig.get_connection_url())
         
         # Verificar conexión
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        print("✅ Conexión PostgreSQL exitosa")
         
-        # Añadir metadatos
-        df_epizootias['created_at'] = datetime.now()
-        df_epizootias['updated_at'] = datetime.now()
-        
-        # Cargar datos (sin geometrías primero)
+        # Cargar datos principales
         df_epizootias.to_sql(
-            tabla,
+            'epizootias',
             engine,
             if_exists='replace',
             index=False,
             chunksize=100
         )
         
-        # Crear geometrías PostGIS para registros con coordenadas válidas
+        # Optimizaciones PostGIS automáticas (trigger se encarga de punto_geografico)
         with engine.connect() as conn:
-            print("🗺️ Creando geometrías PostGIS...")
+            # Crear índices optimizados
+            indices_sql = [
+                "CREATE INDEX IF NOT EXISTS idx_epizootias_municipio_optimizado ON epizootias(codigo_municipio)",
+                "CREATE INDEX IF NOT EXISTS idx_epizootias_vereda_optimizado ON epizootias(codigo_vereda)",
+                "CREATE INDEX IF NOT EXISTS idx_epizootias_fecha_optimizado ON epizootias(fecha_recoleccion)",
+                "CREATE INDEX IF NOT EXISTS idx_epizootias_pcr_optimizado ON epizootias(resultado_pcr) WHERE resultado_pcr IS NOT NULL"
+            ]
             
-            # Actualizar geometrías donde hay coordenadas válidas
-            geometrias_creadas = conn.execute(text(f"""
-                UPDATE {tabla} 
-                SET punto_geografico = ST_SetSRID(ST_MakePoint(longitud, latitud), 4326)
-                WHERE latitud IS NOT NULL 
-                AND longitud IS NOT NULL
-                AND latitud BETWEEN -4.2 AND 12.6 
-                AND longitud BETWEEN -81.8 AND -66.9
-            """))
+            for sql in indices_sql:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning("index_creation_failed", sql=sql[:50], error=str(e))
             
-            filas_geometria = geometrias_creadas.rowcount
-            print(f"   ✅ {filas_geometria} puntos geográficos creados")
+            # Estadísticas post-carga
+            stats = conn.execute(text("""
+                SELECT 
+                    COUNT(*) as total_records,
+                    COUNT(DISTINCT codigo_municipio) as municipios,
+                    COUNT(DISTINCT especie) as especies,
+                    COUNT(*) FILTER (WHERE punto_geografico IS NOT NULL) as con_coordenadas,
+                    COUNT(*) FILTER (WHERE resultado_pcr IS NOT NULL) as con_pcr,
+                    COUNT(*) FILTER (WHERE resultado_pcr = 'POSITIVO') as pcr_positivos,
+                    COUNT(*) FILTER (WHERE codigo_vereda IS NOT NULL) as con_codigo_veredal,
+                    MIN(fecha_recoleccion) as fecha_min,
+                    MAX(fecha_recoleccion) as fecha_max
+                FROM epizootias
+            """)).fetchone()
             
-            # Estadísticas post-carga completas
-            total_cargado = conn.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
-            print(f"✅ {total_cargado:,} epizootias cargadas exitosamente")
-            
-            if total_cargado > 0:
-                stats = pd.read_sql(text(f"""
-                    SELECT 
-                        COUNT(DISTINCT codigo_municipio) as municipios,
-                        COUNT(DISTINCT especie) as especies,
-                        COUNT(*) FILTER (WHERE punto_geografico IS NOT NULL) as con_coordenadas,
-                        COUNT(*) FILTER (WHERE resultado_pcr IS NOT NULL) as con_pcr,
-                        COUNT(*) FILTER (WHERE resultado_pcr = 'POSITIVO') as pcr_positivos,
-                        COUNT(*) FILTER (WHERE codigo_divipola_vereda IS NOT NULL) as con_codigo_veredal,
-                        MIN(fecha_recoleccion) as fecha_min,
-                        MAX(fecha_recoleccion) as fecha_max
-                    FROM {tabla}
-                """), conn)
+            if stats:
+                s = dict(stats)
+                logger.info("epizootias_loading_completed", **s)
                 
-                if len(stats) > 0:
-                    s = stats.iloc[0]
-                    print(f"📍 Municipios: {s['municipios']}")
-                    print(f"🐒 Especies: {s['especies']}")
-                    print(f"📍 Con coordenadas: {s['con_coordenadas']}")
-                    print(f"🧪 Con PCR: {s['con_pcr']}")
-                    print(f"⚠️ PCR Positivos: {s['pcr_positivos']}")
-                    print(f"🗺️ Con código veredal: {s['con_codigo_veredal']}")
-                    
-                    if s['fecha_min'] and s['fecha_max']:
-                        print(f"📅 Período: {s['fecha_min']} a {s['fecha_max']}")
-            
-            # Crear índices espaciales adicionales
-            print("🔧 Creando índices...")
-            try:
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{tabla}_punto_geo 
-                    ON {tabla} USING GIST(punto_geografico)
-                """))
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{tabla}_municipio 
-                    ON {tabla}(codigo_municipio)
-                """))
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{tabla}_vereda 
-                    ON {tabla}(codigo_divipola_vereda)
-                """))
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{tabla}_fecha 
-                    ON {tabla}(fecha_recoleccion)
-                """))
-                conn.commit()
-                print("✅ Índices creados/verificados")
-            except Exception as e:
-                print(f"⚠️ Error creando índices: {e}")
+                # Alerta PCR positivos
+                if s['pcr_positivos'] > 0:
+                    logger.warning("pcr_positivos_detected", count=s['pcr_positivos'])
         
         return True
         
     except Exception as e:
-        print(f"❌ Error cargando a PostgreSQL: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("epizootias_loading_failed", error=str(e))
         return False
 
-def procesar_epizootias_completo(archivo_excel):
+def procesar_epizootias_completo(archivo_excel: Path = None) -> bool:
     """
-    Proceso completo: Excel → Procesamiento → PostgreSQL
+    Proceso completo optimizado: Excel → Procesamiento → PostgreSQL
     """
-    print("🐒 PROCESAMIENTO COMPLETO EPIZOOTIAS V2.0")
-    print("=" * 45)
+    logger.info("epizootias_complete_process_started")
     
-    inicio = datetime.now()
-    print(f"🚀 Iniciando: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
+    if archivo_excel is None:
+        archivo_excel = FileConfig.EPIZOOTIAS_FILE
     
     try:
-        # 1. Verificar archivo
-        if not os.path.exists(archivo_excel):
-            print(f"❌ ERROR: Archivo no encontrado: {archivo_excel}")
+        # 1. Procesar epizootias
+        df_epizootias = procesar_epizootias_optimizado(archivo_excel)
+        
+        if df_epizootias is None or len(df_epizootias) == 0:
+            logger.error("epizootias_processing_returned_empty")
             return False
         
-        print(f"📂 Archivo: {archivo_excel}")
-        tamaño_mb = os.path.getsize(archivo_excel) / (1024*1024)
-        print(f"📊 Tamaño: {tamaño_mb:.1f} MB")
-        
-        # 2. Procesar epizootias
-        df_epizootias = procesar_epizootias(archivo_excel)
-        
-        if df_epizootias is None:
-            print("❌ Error en procesamiento de epizootias")
-            return False
-        
-        # 3. Cargar a PostgreSQL
-        exito = cargar_epizootias_postgresql(df_epizootias)
-        
-        # 4. Resumen final
-        duracion = datetime.now() - inicio
-        print(f"\n{'='*45}")
-        print(" PROCESAMIENTO EPIZOOTIAS COMPLETADO ".center(45))
-        print("=" * 45)
+        # 2. Cargar a PostgreSQL
+        exito = cargar_epizootias_postgresql_optimizado(df_epizootias)
         
         if exito:
-            print("🎉 ¡EPIZOOTIAS CARGADAS EXITOSAMENTE!")
-            print(f"📊 {len(df_epizootias):,} registros procesados")
-            print("🗺️ Códigos veredales con contexto municipal (CORREGIDO)")
-            print("📍 Datos geoespaciales optimizados")
-            print("🔬 Resultados laboratorio organizados")
-            print("📈 Datos originales preservados")
-        else:
-            print("⚠️ Procesamiento con errores en carga BD")
-        
-        print(f"⏱️ Tiempo total: {duracion.total_seconds():.1f} segundos")
-        print(f"📅 Finalizado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # 5. Crear backup CSV
-        if exito:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = f"backups/epizootias_backup_{timestamp}.csv"
+            logger.info("epizootias_complete_process_successful")
             
-            os.makedirs("backups", exist_ok=True)
+            # 3. Crear backup
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = FileConfig.BACKUPS_DIR / f"epizootias_backup_{timestamp}.csv"
+            FileConfig.create_directories()
+            
             df_epizootias.to_csv(backup_file, index=False, encoding='utf-8-sig')
-            print(f"💾 Backup creado: {backup_file}")
+            logger.info("epizootias_backup_created", backup_file=str(backup_file))
         
         return exito
         
     except Exception as e:
-        print(f"❌ Error crítico: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("epizootias_complete_process_failed", error=str(e))
         return False
 
-def generar_reporte_epizootias():
+def generar_reporte_epizootias() -> bool:
     """
     Genera reporte epidemiológico de epizootias
     """
-    print("\n📊 GENERANDO REPORTE EPIDEMIOLÓGICO EPIZOOTIAS...")
+    logger.info("generating_epizootias_report")
     
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(DatabaseConfig.get_connection_url())
         
         with engine.connect() as conn:
-            # Resumen general
-            resumen = pd.read_sql(text("""
+            # Resumen epizootias
+            resumen = conn.execute(text("""
                 SELECT 
                     COUNT(*) as total_epizootias,
                     COUNT(DISTINCT municipio) as municipios_afectados,
                     COUNT(DISTINCT especie) as especies_afectadas,
                     COUNT(*) FILTER (WHERE punto_geografico IS NOT NULL) as con_geolocalizacion,
                     COUNT(*) FILTER (WHERE resultado_pcr = 'POSITIVO') as pcr_positivos,
-                    COUNT(*) FILTER (WHERE codigo_divipola_vereda IS NOT NULL) as con_codigo_veredal,
+                    COUNT(*) FILTER (WHERE codigo_vereda IS NOT NULL) as con_codigo_veredal,
                     MIN(fecha_recoleccion) as primera_epizooti,
                     MAX(fecha_recoleccion) as ultima_epizooti
                 FROM epizootias
-            """), conn)
+            """)).fetchone()
             
-            if len(resumen) > 0:
-                r = resumen.iloc[0]
-                print(f"📋 RESUMEN EPIZOOTIAS:")
-                print(f"   Total registros: {r['total_epizootias']:,}")
-                print(f"   Municipios afectados: {r['municipios_afectados']}")
-                print(f"   Especies afectadas: {r['especies_afectadas']}")
-                print(f"   Con geolocalización: {r['con_geolocalizacion']:,}")
-                print(f"   PCR positivos: {r['pcr_positivos']}")
-                print(f"   Con código veredal: {r['con_codigo_veredal']:,}")
-                
-                if r['primera_epizooti'] and r['ultima_epizooti']:
-                    print(f"   Período: {r['primera_epizooti']} a {r['ultima_epizooti']}")
-            
-            # Municipios más afectados
-            municipios_afectados = pd.read_sql(text("""
-                SELECT municipio, COUNT(*) as casos
-                FROM epizootias 
-                WHERE municipio IS NOT NULL
-                GROUP BY municipio 
-                ORDER BY casos DESC 
-                LIMIT 5
-            """), conn)
-            
-            if len(municipios_afectados) > 0:
-                print(f"\n🏆 TOP 5 MUNICIPIOS MÁS AFECTADOS:")
-                for _, row in municipios_afectados.iterrows():
-                    print(f"   {row['municipio']}: {row['casos']} casos")
-            
-            # Especies más afectadas
-            especies_afectadas = pd.read_sql(text("""
-                SELECT especie, COUNT(*) as casos
-                FROM epizootias 
-                WHERE especie IS NOT NULL
-                GROUP BY especie 
-                ORDER BY casos DESC 
-                LIMIT 5
-            """), conn)
-            
-            if len(especies_afectadas) > 0:
-                print(f"\n🐒 ESPECIES MÁS AFECTADAS:")
-                for _, row in especies_afectadas.iterrows():
-                    print(f"   {row['especie']}: {row['casos']} casos")
-            
-            # Análisis temporal si hay datos
-            temporal = pd.read_sql(text("""
-                SELECT EXTRACT(YEAR FROM fecha_recoleccion) as año, COUNT(*) as casos
-                FROM epizootias 
-                WHERE fecha_recoleccion IS NOT NULL
-                GROUP BY EXTRACT(YEAR FROM fecha_recoleccion)
-                ORDER BY año DESC
-                LIMIT 5
-            """), conn)
-            
-            if len(temporal) > 0:
-                print(f"\n📅 DISTRIBUCIÓN TEMPORAL:")
-                for _, row in temporal.iterrows():
-                    if pd.notna(row['año']):
-                        print(f"   {int(row['año'])}: {row['casos']} casos")
+            if resumen:
+                r = dict(resumen)
+                logger.info("epizootias_epidemiological_report", **r)
         
         return True
         
     except Exception as e:
-        print(f"❌ Error generando reporte: {e}")
+        logger.error("epizootias_report_failed", error=str(e))
         return False
 
 # ================================
 # FUNCIÓN PRINCIPAL
 # ================================
 if __name__ == "__main__":
-    print("🐒 PROCESADOR EPIZOOTIAS V2.0")
-    print("=" * 30)
+    print("🐒 CARGA EPIZOOTIAS OPTIMIZADA")
+    print("=" * 40)
     
-    # Archivo por defecto
-    archivo_default = "data/epizootias.xlsx"
+    archivo_default = FileConfig.EPIZOOTIAS_FILE
     
-    # Verificar archivo
-    if not os.path.exists(archivo_default):
-        print(f"❌ ERROR: No se encuentra '{archivo_default}'")
-        print("\n💡 Opciones:")
-        print("1. Colocar archivo de epizootias en 'data/epizootias.xlsx'")
-        print("2. Modificar variable archivo_default")
-        print("3. Llamar: procesar_epizootias_completo('ruta/archivo.xlsx')")
+    if not archivo_default.exists():
+        print(f"❌ ERROR: Archivo no encontrado: {archivo_default}")
+        print("💡 Colocar archivo en data/epizootias.xlsx")
+        sys.exit(1)
+    
+    # Ejecutar proceso completo
+    exito = procesar_epizootias_completo(archivo_default)
+    
+    if exito:
+        print("✅ Epizootias cargadas exitosamente")
+        generar_reporte_epizootias()
+        print("\n🎯 Epizootias listas para vigilancia epidemiológica")
     else:
-        # Ejecutar procesamiento completo
-        exito = procesar_epizootias_completo(archivo_default)
-        
-        if exito:
-            print("\n📊 Generando reporte epidemiológico...")
-            generar_reporte_epizootias()
-            
-            print("\n🎯 PRÓXIMOS PASOS:")
-            print("1. Revisar datos en DBeaver: tabla 'epizootias'")
-            print("2. Visualizar puntos geográficos en mapa")
-            print("3. Analizar correlación espacial con casos humanos")
-            print("4. Identificar clusters de mortalidad animal")
-            print("5. ¡Vigilancia epidemiológica integrada! 🚀")
-        else:
-            print("\n❌ Procesamiento fallido. Revisar errores.")
+        print("❌ Error en carga de epizootias")
