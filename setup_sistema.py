@@ -118,7 +118,7 @@ class SistemaVerificadorOptimizado:
             'DB_PASSWORD': 'tolima2025',
             'LOG_LEVEL': 'INFO',
             'CACHE_TTL': '3600',
-            'SYSTEM_VERSION': '2.0.0'
+            'SYSTEM_VERSION': '1.0.0'
         }
         
         variables_existentes = {}
@@ -144,7 +144,7 @@ class SistemaVerificadorOptimizado:
         if variables_faltantes or not env_file.exists():
             try:
                 # Crear contenido .env optimizado
-                contenido_env = f"""# Sistema Epidemiológico Tolima V2.0 - Configuración
+                contenido_env = f"""# Sistema Epidemiológico Tolima V1.0 - Configuración
 # Generado automáticamente: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # Pre-procesamiento local → PostgreSQL → Dashboard Streamlit Cloud
 
@@ -453,7 +453,7 @@ volumes:
         """Genera reporte final de verificación"""
         
         reporte = f"""
-🔍 VERIFICACIÓN SISTEMA EPIDEMIOLÓGICO TOLIMA V2.0
+🔍 VERIFICACIÓN SISTEMA EPIDEMIOLÓGICO TOLIMA V1.0
 {'='*65}
 
 ⏱️ RESUMEN:
@@ -504,7 +504,7 @@ volumes:
 
 def main():
     """Función principal optimizada"""
-    print("🔍 VERIFICADOR SISTEMA EPIDEMIOLÓGICO TOLIMA V2.0")
+    print("🔍 VERIFICADOR SISTEMA EPIDEMIOLÓGICO TOLIMA V1.0")
     print("=" * 65)
     print("Pre-procesamiento local → PostgreSQL → Dashboard Cloud")
     

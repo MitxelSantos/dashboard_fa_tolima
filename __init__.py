@@ -5,7 +5,7 @@ Sistema Epidemiológico Tolima V1.0
 Pre-procesamiento local optimizado → PostgreSQL → Dashboard Streamlit Cloud
 """
 
-__version__ = "2.0.0"
+__version__ = "1.0.0"
 __author__ = "Sistema Epidemiológico Tolima"
 __description__ = "Pre-procesamiento optimizado de datos epidemiológicos"
 

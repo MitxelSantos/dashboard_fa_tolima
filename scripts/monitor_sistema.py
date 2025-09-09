@@ -591,7 +591,7 @@ class MonitorSistemaOptimizado:
         </div>
         
         <div class="footer">
-            <p><em>Monitor Sistema Epidemiológico Tolima V2.0</em></p>
+            <p><em>Monitor Sistema Epidemiológico Tolima V1.0</em></p>
             <p>🏥 Secretaría de Salud del Tolima - Vigilancia Epidemiológica</p>
         </div>
     </div>

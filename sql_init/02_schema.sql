@@ -404,6 +404,6 @@ COMMENT ON TABLE epizootias IS 'Vigilancia epizootias con geolocalización preci
 COMMENT ON COLUMN casos_fiebre_amarilla.municipio_procedencia IS 'CRÍTICO: Municipio donde se infectó (para mapeo veredal)';
 COMMENT ON COLUMN casos_fiebre_amarilla.codigo_vereda_infeccion IS 'Código DIVIPOLA vereda donde ocurrió infección';
 
-\echo 'Esquema optimizado Sistema Epidemiológico Tolima V2.0 creado exitosamente!'
+\echo 'Esquema optimizado Sistema Epidemiológico Tolima V1.0 creado exitosamente!'
 \echo 'Performance: Índices especializados, constraints robustos, triggers automáticos'
 \echo 'Listo para carga optimizada de datos masivos'
