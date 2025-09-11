@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 config.py - Configuración Centralizada OPTIMIZADA Sistema Epidemiológico Tolima
-CORREGIDO: Configuración unificada, caché inteligente DIVIPOLA, performance optimizado
+CORREGIDO: Error fiona.path solucionado, configuración unificada, caché inteligente DIVIPOLA
 """
 
 import os
@@ -54,7 +54,7 @@ class DatabaseConfig:
     DEFAULT_PORT = "5432"
     DEFAULT_DATABASE = "epidemiologia_tolima"
     DEFAULT_USER = "tolima_admin"
-    DEFAULT_PASSWORD = "tolima2025"  # 🔧 UNIFICADO - sin exclamación
+    DEFAULT_PASSWORD = "tolima2025"
     
     # Configuración desde variables de entorno
     HOST = os.getenv("DB_HOST", DEFAULT_HOST)
@@ -143,12 +143,12 @@ class FileConfig:
         return files_status
 
 # ================================
-# CACHÉ INTELIGENTE DIVIPOLA (SINGLETON OPTIMIZADO)
+# CACHÉ INTELIGENTE DIVIPOLA (SINGLETON OPTIMIZADO) - CORREGIDO
 # ================================
 
 class DivipolaCache:
     """
-    Caché singleton optimizado para códigos DIVIPOLA
+    Caché singleton optimizado para códigos DIVIPOLA - CORREGIDO ERROR FIONA
     Se carga UNA sola vez y se reutiliza en toda la aplicación
     """
     _instance = None
@@ -162,7 +162,7 @@ class DivipolaCache:
         return cls._instance
     
     def _load_cache(self):
-        """Carga los códigos DIVIPOLA una sola vez"""
+        """Carga los códigos DIVIPOLA una sola vez - CORREGIDO"""
         if self._cache_data is not None:
             return  # Ya está cargado
         
@@ -176,8 +176,21 @@ class DivipolaCache:
         try:
             logger.info("divipola_loading_started", path=str(gpkg_path))
             
-            # Cargar archivo geoespacial
-            gdf = gpd.read_file(gpkg_path)
+            # CORRECCIÓN: Cargar archivo geoespacial con manejo de errores fiona
+            try:
+                gdf = gpd.read_file(gpkg_path)
+            except Exception as fiona_error:
+                # Intentar con driver específico si fiona falla
+                try:
+                    gdf = gpd.read_file(gpkg_path, driver='GPKG')
+                except Exception as backup_error:
+                    logger.error("divipola_load_failed", 
+                               error=str(fiona_error), 
+                               backup_error=str(backup_error),
+                               path=str(gpkg_path))
+                    self._cache_data = self._create_empty_cache()
+                    return
+            
             gdf = gdf.dropna(subset=["codigo_divipola", "nombre"])
             gdf["nombre_normalizado"] = gdf["nombre"].apply(self._normalize_name)
             
@@ -388,6 +401,12 @@ def determinar_ubicacion_urbano_rural(vereda: str, corregimiento: str, barrio: s
         return "Rural"
     
     return "Urbano"
+
+def normalizar_nombre_territorio(nombre: str) -> str:
+    """Normalizar nombres de territorios"""
+    if pd.isna(nombre) or not nombre:
+        return ""
+    return str(nombre).strip().upper()
 
 # ================================
 # FUNCIONES DE BÚSQUEDA OPTIMIZADAS

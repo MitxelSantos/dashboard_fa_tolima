@@ -1,5 +1,5 @@
 # =============================================
-# Sistema Epidemiológico Tolima - Dependencias Optimizadas
+# Sistema Epidemiológico Tolima - Dependencias
 # Pre-procesamiento local → PostgreSQL → Dashboard Streamlit Cloud
 # =============================================
 
@@ -19,11 +19,11 @@ openpyxl==3.1.2                  # Excel files (PAIweb, casos)
 python-dateutil==2.8.2           # Parsing fechas robusto
 
 # =====================================
-# GEOESPACIAL OPTIMIZADO
+# GEOESPACIAL OPTIMIZADO - VERSIONES ESPECÍFICAS COMPATIBLES
 # =====================================
 geopandas==0.14.3                # Datos geoespaciales
 shapely==2.0.2                   # Geometrías optimizadas
-fiona>=1.9.5,<2.0                # I/O geoespacial compatible
+fiona==1.9.6                     # I/O geoespacial - VERSIÓN ESPECÍFICA que soluciona error
 pyproj==3.6.1                    # Proyecciones cartográficas
 
 # =====================================
@@ -38,7 +38,6 @@ tqdm==4.66.2                     # Progress bars
 # =====================================
 schedule==1.2.0                  # Tareas programadas
 psutil==5.9.8                    # Monitoreo sistema
-pathlib2==2.3.7; python_version<"3.6"  # Compatibilidad paths
 
 # =====================================
 # DESARROLLO Y TESTING (Opcional)
@@ -48,16 +47,15 @@ black==23.12.1                   # Code formatting
 flake8==7.0.0                    # Linting
 
 # =====================================
-# INSTALACIÓN RÁPIDA
+# INSTALACIÓN
 # =====================================
-# Instalación completa:
+# pip install --upgrade pip setuptools wheel
+# pip install numpy==1.26.3 pandas==2.2.0
+# pip install shapely==2.0.2 pyproj==3.6.1 fiona==1.9.6 geopandas==0.14.3
 # pip install -r requirements.txt
 
-# Instalación solo core (mínima):
-# pip install psycopg2-binary SQLAlchemy pandas geopandas python-dotenv
-
 # =====================================
-# COMPATIBILIDAD
+# COMPATIBILIDAD VERIFICADA
 # =====================================
 # Python >= 3.8
 # PostgreSQL >= 12

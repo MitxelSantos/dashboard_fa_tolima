@@ -1,5 +1,5 @@
 # =====================================
-# .gitignore - Sistema Epidemiológico Tolima V2.0
+# .gitignore - Sistema Epidemiológico Tolima V1.0
 # =====================================
 
 # =====================================
@@ -15,6 +15,8 @@ ENV/
 env.bak/
 venv.bak/
 .python-version
+.conda/
+conda-meta/
 
 # Archivos de caché de Python
 __pycache__/
@@ -61,6 +63,7 @@ coverage.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # IPython
 profile_default/
@@ -80,6 +83,10 @@ data/*.dbf
 data/*.shx
 data/*.prj
 data/*.cpg
+data/*.geojson
+data/*.kml
+data/*.kmz
+data/
 
 # Excepciones: archivos de ejemplo o plantillas
 !data/ejemplos/
@@ -92,6 +99,8 @@ data/processed/
 processed_data/
 output/
 results/
+exports/
+downloads/
 
 # Archivos grandes de datos geoespaciales
 *.sqlite
@@ -103,6 +112,8 @@ results/
 *.feather
 *.h5
 *.hdf5
+*.arrow
+*.orc
 
 # =====================================
 # CONFIGURACIÓN Y SECRETOS
@@ -114,6 +125,7 @@ results/
 .env.production
 .env.staging
 .env.development
+.env.test
 
 # Configuración con secretos
 secrets.toml
@@ -122,6 +134,8 @@ credentials.json
 token.json
 config.ini
 settings.ini
+local_settings.py
+config.local.py
 
 # Certificados y llaves
 *.pem
@@ -129,6 +143,8 @@ settings.ini
 *.crt
 *.p12
 *.pfx
+*.cer
+*.csr
 
 # =====================================
 # LOGS Y RESPALDOS
@@ -136,29 +152,38 @@ settings.ini
 
 # Logs del sistema
 *.log
-logs/
+logs/*.log
+logs/*.txt
 log/
 log.txt
+error.log
+debug.log
 
 # Archivos de respaldo
-backups/
+backups/*.sql
+backups/*.dump
+backups/*.tar.gz
+backups/*.zip
 backup/
 *.bak
 *.backup
 *.dump
 *.sql.gz
 
-# Reportes generados
+# Reportes generados automáticamente
 reportes/*.html
 reportes/*.pdf
 reportes/*.xlsx
 reportes/*.png
 reportes/*.jpg
 reportes/*.svg
+reportes/*.docx
 
 # Excepciones: mantener estructura y ejemplos
 !logs/.gitkeep
+!logs/README.md
 !backups/.gitkeep
+!backups/README.md
 !reportes/.gitkeep
 !reportes/ejemplos/
 
@@ -184,14 +209,20 @@ migrations/versions/*.pyc
 
 # Volúmenes de Docker (datos persistentes)
 postgres_data/
+postgres_data_prod/
 pgdata/
 docker_postgres_data/
+tolima_postgres_data_prod/
 
 # Logs de contenedores
 docker-logs/
+container-logs/
 
 # Archivos temporales de Docker
 .dockerignore.bak
+docker-compose.override.yml
+docker-compose.production.yml
+docker-compose.staging.yml
 
 # =====================================
 # ARCHIVOS DEL SISTEMA OPERATIVO
@@ -246,6 +277,7 @@ $RECYCLE.BIN/
 # Visual Studio Code
 .vscode/
 *.code-workspace
+.vscode-server/
 
 # PyCharm
 .idea/
@@ -307,14 +339,17 @@ tmp/
 .cache/
 __temp/
 .temp/
+processing_cache/
+.processing_cache/
 
-# Archivos de thumbnails
+# Thumbnails y previews
 *.png
 *.jpg
 *.jpeg
 *.gif
 *.svg
 *.webp
+*.ico
 
 # Excepciones: logos e imágenes necesarias
 !assets/
@@ -322,6 +357,7 @@ __temp/
 !static/images/
 !docs/images/
 !README_images/
+!dashboard/assets/
 
 # =====================================
 # ESPECÍFICOS DEL PROYECTO EPIDEMIOLÓGICO
@@ -336,29 +372,23 @@ models/
 *.pth
 *.h5
 *.model
+*.bin
 
 # Datos de prueba generados automáticamente
 test_data/
 mock_data/
 fake_data/
-
-# Archivos de configuración específicos del despliegue
-docker-compose.override.yml
-docker-compose.production.yml
-docker-compose.staging.yml
+synthetic_data/
 
 # Archivos de monitoreo y alertas sensibles
 alertas_privadas/
 notificaciones/
 emails/
 
-# Exportaciones temporales
-exports/
-downloads/
-
 # Cache de procesamiento
 processing_cache/
 .processing_cache/
+chunk_cache/
 
 # =====================================
 # STREAMLIT Y DASHBOARD
@@ -367,6 +397,7 @@ processing_cache/
 # Archivos de estado de Streamlit
 .streamlit/
 streamlit_cache/
+.streamlit_cache/
 
 # =====================================
 # JUPYTER Y NOTEBOOKS
@@ -406,14 +437,6 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -436,6 +459,29 @@ dmypy.json
 .pytype/
 
 # =====================================
+# NUEVAS ADICIONES - HERRAMIENTAS MODERNAS
+# =====================================
+
+# Poetry
+poetry.lock
+
+# Pipenv
+Pipfile.lock
+
+# pdm
+.pdm.toml
+__pypackages__/
+
+# PEP 582
+__pypackages__/
+
+# Ruff
+.ruff_cache/
+
+# Conda
+.conda/
+
+# =====================================
 # ARCHIVOS DE CONFIGURACIÓN LOCAL
 # =====================================
 
@@ -449,6 +495,27 @@ test_local/
 pruebas_locales/
 
 # =====================================
+# ARCHIVOS DE SISTEMA EPIDEMIOLÓGICO
+# =====================================
+
+# Archivos específicos del proyecto que no deben subirse
+data/poblacion_veredas.csv
+data/paiweb.xlsx
+data/casos.xlsx
+data/epizootias.xlsx
+data/tolima_cabeceras_veredas.gpkg
+
+# Reportes generados con datos reales
+reportes/reporte_*.pdf
+reportes/cobertura_*.xlsx
+reportes/analisis_*.html
+
+# Backups con datos reales
+backups/poblacion_backup_*.csv
+backups/vacunacion_backup_*.csv
+backups/casos_backup_*.csv
+
+# =====================================
 # MANTENER ESTRUCTURA DE DIRECTORIOS
 # =====================================
 
@@ -460,16 +527,25 @@ pruebas_locales/
 # =====================================
 
 # NUNCA subir:
-# - Datos reales de pacientes (CSV, Excel)
-# - Configuraciones con contraseñas  
+# - Datos reales de pacientes (CSV, Excel, GPKG)
+# - Configuraciones con contraseñas de BD
 # - Archivos de logs con información sensible
-# - Backups de base de datos
+# - Backups de base de datos con datos reales
 # - Archivos temporales de procesamiento
 # - Modelos o caches grandes
+# - Credenciales de APIs o servicios
 
 # SIEMPRE mantener:
 # - Scripts de procesamiento
 # - Configuración de Docker
 # - Documentación
-# - Ejemplos no sensibles
+# - Ejemplos no sensibles (datos fake/plantillas)
 # - Estructura de directorios (.gitkeep)
+# - Tests y verificaciones
+
+# ARCHIVOS CRÍTICOS QUE SÍ INCLUIR:
+# - config.py (sin credenciales)
+# - requirements.txt
+# - docker-compose.yml
+# - Scripts de setup y verificación
+# - Documentación README.md
