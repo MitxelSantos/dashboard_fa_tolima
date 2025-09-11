@@ -1,86 +1,32 @@
+version: '3.8'
+
 services:
-
-  # =====================================================
-  # PostgreSQL + PostGIS SIMPLIFICADO
-  # =====================================================
   postgres:
-    image: postgis/postgis:15-3.3-alpine
+    image: postgis/postgis:15-3.4-alpine
     container_name: tolima_postgres_prod
-
     environment:
-      # Configuración base
       POSTGRES_DB: epidemiologia_tolima
       POSTGRES_USER: tolima_admin
       POSTGRES_PASSWORD: tolima2025
-
-      # Configuración de datos
-      PGDATA: /var/lib/postgresql/data/pgdata
-
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=es_CO.UTF-8 --lc-ctype=es_CO.UTF-8"
     ports:
       - "5432:5432"
-
     volumes:
-      # Solo datos persistentes y scripts SQL
-      - postgres_data_prod:/var/lib/postgresql/data
+      - tolima_postgres_data_prod:/var/lib/postgresql/data
       - ./sql_init:/docker-entrypoint-initdb.d:ro
-      - ./backups:/backups
-
-    # Configuración optimizada por línea de comandos
-    command: >
-      postgres -c listen_addresses='*' -c max_connections=100 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB -c checkpoint_completion_target=0.9 -c wal_buffers=16MB -c default_statistics_target=100 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c log_min_messages=warning
-
+    networks:
+      - tolima_epidemiologia_network
     restart: unless-stopped
-
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U tolima_admin -d epidemiologia_tolima" ]
+      test: ["CMD-SHELL", "pg_isready -U tolima_admin -d epidemiologia_tolima"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
 
-    networks:
-      - tolima_network
-
-  # =====================================================
-  # pgAdmin OPCIONAL
-  # =====================================================
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: tolima_pgadmin_prod
-
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@tolima.gov.co
-      PGADMIN_DEFAULT_PASSWORD: admin123
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-
-    ports:
-      - "8080:80"
-
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-    restart: unless-stopped
-
-    networks:
-      - tolima_network
-
-# =====================================================
-# VOLÚMENES
-# =====================================================
 volumes:
-  postgres_data_prod:
-    name: tolima_postgres_data_prod
+  tolima_postgres_data_prod:
+    driver: local
 
-  pgadmin_data:
-    name: tolima_pgadmin_data
-
-# =====================================================
-# NETWORKING
-# =====================================================
 networks:
-  tolima_network:
-    name: tolima_epidemiologia_network
+  tolima_epidemiologia_network:
+    driver: bridge

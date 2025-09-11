@@ -18,6 +18,47 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import DatabaseConfig, FileConfig
 
+
+def safe_dict_conversion(obj):
+    """Convierte objeto a diccionario de forma segura"""
+    if obj is None:
+        return {}
+    
+    # Si ya es diccionario, retornarlo
+    if isinstance(obj, dict):
+        return obj
+    
+    # Si es resultado de SQLAlchemy (Row object)
+    if hasattr(obj, '_asdict'):
+        return obj._asdict()
+    
+    # Si es resultado de psycopg2 con keys()
+    if hasattr(obj, 'keys') and callable(obj.keys):
+        return dict(zip(obj.keys(), obj))
+    
+    # Si es una tupla con nombres de campos
+    if hasattr(obj, '_fields'):
+        return obj._asdict()
+    
+    # Último recurso: intentar convertir directamente
+    try:
+        return safe_dict_conversion(obj)
+    except (TypeError, ValueError):
+        # Si todo falla, retornar diccionario vacío
+        return {}
+
+
+
+def safe_dict_from_result(result):
+    """Convierte resultado SQL a diccionario de forma segura"""
+    if result is None:
+        return {}
+    if hasattr(result, '_asdict'):
+        return result._asdict()
+    if hasattr(result, 'keys'):
+        return dict(zip(result.keys(), result))
+    return safe_dict_conversion(result)
+
 logger = structlog.get_logger()
 
 def cargar_unidades_territoriales_postgresql(archivo_gpkg: Path = None) -> bool:
@@ -167,7 +208,7 @@ def cargar_unidades_territoriales_postgresql(archivo_gpkg: Path = None) -> bool:
                 SELECT 
                     tipo, 
                     COUNT(*) as cantidad,
-                    ROUND(AVG(area_oficial_km2), 2) as area_promedio_km2
+                    CAST(CAST(CAST(ROUND(AVG(area_oficial_km2)::numeric::numeric::numeric, 2) AS decimal) AS decimal) AS decimal) as area_promedio_km2
                 FROM unidades_territoriales 
                 WHERE area_oficial_km2 IS NOT NULL
                 GROUP BY tipo 
@@ -204,14 +245,19 @@ def cargar_unidades_territoriales_postgresql(archivo_gpkg: Path = None) -> bool:
             """)).fetchone()
             
             estadisticas_finales = {
-                'total_records': total_records,
-                'valid_geometries': geom_validas,
-                'types_distribution': stats_tipo.to_dict('records'),
-                'regions_distribution': stats_region.to_dict('records'),
-                'geographic_extent': dict(bbox) if bbox else None
+            'total_records': total_records,
+            'valid_geometries': geom_validas,
+            'types_distribution': stats_tipo.to_dict("records") if not stats_tipo.empty else [],
+            'regions_distribution': stats_region.to_dict("records") if not stats_region.empty else [],
+            'geographic_extent': safe_dict_conversion(bbox),
+            'total_records': total_records,
+            'valid_geometries': geom_validas,
+            'types_distribution': stats_tipo.to_dict("records"),
+            'regions_distribution': stats_region.to_dict("records"),
+            'geographic_extent': safe_dict_conversion(bbox) if bbox else None
             }
             
-            logger.info("territories_loading_completed", **estadisticas_finales)
+        logger.info("territories_loading_completed", **safe_dict_conversion(estadisticas_finales))
         
         # 9. CREAR BACKUP OPCIONAL
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -272,7 +318,7 @@ def verificar_integridad_territorial() -> bool:
                     logger.error("verification_query_failed", query=nombre, error=str(e))
                     resultados[nombre] = "ERROR"
             
-            logger.info("territorial_integrity_results", **resultados)
+            logger.info("territorial_integrity_results", **safe_dict_conversion(resultados))
             
             if problemas_encontrados:
                 logger.warning("integrity_issues_found", issues=problemas_encontrados)
@@ -314,8 +360,8 @@ def generar_consultas_territoriales_muestra() -> bool:
             SELECT 
                 tipo, 
                 COUNT(*) as cantidad,
-                ROUND(AVG(area_oficial_km2), 2) as area_promedio_km2,
-                ROUND(SUM(area_oficial_km2), 2) as area_total_km2
+                CAST(CAST(CAST(ROUND(AVG(area_oficial_km2)::numeric::numeric::numeric, 2) AS decimal) AS decimal) AS decimal) as area_promedio_km2,
+                CAST(CAST(ROUND(SUM(area_oficial_km2)::numeric::numeric, 2) AS decimal) AS decimal) as area_total_km2
             FROM unidades_territoriales 
             WHERE area_oficial_km2 IS NOT NULL
             GROUP BY tipo 
@@ -326,7 +372,7 @@ def generar_consultas_territoriales_muestra() -> bool:
             SELECT 
                 region, 
                 COUNT(*) as municipios,
-                ROUND(SUM(area_oficial_km2), 2) as area_total_km2
+                CAST(CAST(ROUND(SUM(area_oficial_km2)::numeric::numeric, 2) AS decimal) AS decimal) as area_total_km2
             FROM unidades_territoriales 
             WHERE tipo = 'municipio' AND region IS NOT NULL
             GROUP BY region 
@@ -350,7 +396,7 @@ def generar_consultas_territoriales_muestra() -> bool:
                 ST_YMin(ST_Extent(geometria)) as min_latitud,
                 ST_XMax(ST_Extent(geometria)) as max_longitud,
                 ST_YMax(ST_Extent(geometria)) as max_latitud,
-                ROUND(ST_Area(ST_Extent(geometria))::numeric, 6) as area_extent_grados
+                CAST(CAST(ROUND(ST_Area(ST_Extent(geometria))::numeric::numeric::numeric, 6) AS decimal) AS decimal) as area_extent_grados
             FROM unidades_territoriales 
             WHERE geometria IS NOT NULL
         """
@@ -364,7 +410,7 @@ def generar_consultas_territoriales_muestra() -> bool:
         for nombre, query in consultas_muestra.items():
             try:
                 resultado = pd.read_sql(text(query), engine)
-                resultados_consultas[nombre] = resultado.to_dict('records')
+                resultados_consultas[nombre] = resultado.to_dict("records")
                 
                 logger.info("sample_query_executed",
                            query_name=nombre,

@@ -1,17 +1,24 @@
--- 01_extensions.sql
--- Extensiones necesarias para Sistema Epidemiológico Tolima
+-- 01_extensions.sql - Extensiones PostgreSQL + PostGIS
+-- CORREGIDO: Para imagen postgis/postgis:15-3.4-alpine
 
--- PostGIS para manejo de datos geoespaciales
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS postgis_topology;
+-- PostGIS ya viene instalado en la imagen postgis/postgis
+-- Solo verificamos y configuramos
 
--- Extensiones para búsqueda y análisis de texto
-CREATE EXTENSION IF NOT EXISTS pg_trgm;    -- Similitud de texto (para validación nombres)
-CREATE EXTENSION IF NOT EXISTS unaccent;  -- Remover acentos
-CREATE EXTENSION IF NOT EXISTS fuzzystrmatch; -- Búsqueda aproximada
+-- Verificar PostGIS
+SELECT PostGIS_Version();
 
--- Extensión para UUIDs (útil para IDs únicos)
+-- Extensiones para análisis de texto  
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+
+-- Extensión para UUIDs
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Confirmar extensiones instaladas
-\echo 'Extensiones PostgreSQL instaladas exitosamente'
+-- Configurar timezone Colombia
+SET timezone = 'America/Bogota';
+
+-- Verificar funciones básicas
+SELECT round(123.456, 2) as test_round;
+
+\echo '✅ Extensiones PostgreSQL instaladas exitosamente'

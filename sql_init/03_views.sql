@@ -50,7 +50,7 @@ SELECT
     -- Cobertura optimizada
     CASE 
         WHEN poblacion_total > 0 
-        THEN ROUND(total_vacunados * 100.0 / poblacion_total, 2)
+        THEN CAST(ROUND(total_vacunados * 100.0 / poblacion_total::numeric, 2) AS decimal)
         ELSE 0 
     END as cobertura_porcentaje,
     
@@ -112,13 +112,11 @@ SELECT
     
     -- Población y cobertura
     p.poblacion_total,
-    ROUND(
-        CASE 
+    CAST(ROUND(CASE 
             WHEN p.poblacion_total > 0 
             THEN m.total_vacunados * 100.0 / p.poblacion_total 
             ELSE 0 
-        END, 2
-    ) as cobertura_general,
+        END::numeric, 2) AS decimal) as cobertura_general,
     
     -- Otros indicadores
     o.total_casos,
@@ -155,13 +153,11 @@ SELECT
     COUNT(DISTINCT m.tipo_ubicacion) as tipos_ubicacion,
     
     -- Cobertura municipal agregada
-    ROUND(
-        CASE 
+    CAST(ROUND(CASE 
             WHEN SUM(m.poblacion_total) > 0 
             THEN SUM(m.total_vacunados) * 100.0 / SUM(m.poblacion_total)
             ELSE 0 
-        END, 2
-    ) as cobertura_municipal,
+        END::numeric, 2) AS decimal) as cobertura_municipal,
     
     -- Distribución urbano/rural
     SUM(CASE WHEN m.tipo_ubicacion = 'Urbano' THEN m.total_vacunados ELSE 0 END) as vacunados_urbano,
@@ -215,13 +211,11 @@ tendencias_con_calculo AS (
     SELECT 
         *,
         -- Cobertura mensual
-        ROUND(
-            CASE 
+        CAST(ROUND(CASE 
                 WHEN poblacion_mes > 0 
                 THEN vacunados_mes * 100.0 / poblacion_mes 
                 ELSE 0 
-            END, 2
-        ) as cobertura_mes,
+            END::numeric, 2) AS decimal) as cobertura_mes,
         
         -- Promedio móvil 3 meses
         AVG(vacunados_mes) OVER (
@@ -248,7 +242,7 @@ SELECT
     -- Crecimiento mensual
     CASE 
         WHEN vacunados_mes_anterior > 0 
-        THEN ROUND((vacunados_mes - vacunados_mes_anterior) * 100.0 / vacunados_mes_anterior, 1)
+        THEN CAST(ROUND((vacunados_mes - vacunados_mes_anterior) * 100.0 / vacunados_mes_anterior::numeric, 1) AS decimal)
         ELSE NULL 
     END as crecimiento_porcentual,
     
@@ -256,7 +250,7 @@ SELECT
     CONCAT(año, '-', LPAD(mes::text, 2, '0')) as periodo_texto,
     
     -- Promedio móvil redondeado
-    ROUND(promedio_movil_3m, 0) as promedio_movil_3m_redondeado
+    CAST(ROUND(promedio_movil_3m::numeric, 0) AS decimal) as promedio_movil_3m_redondeado
 
 FROM tendencias_con_calculo
 ORDER BY año DESC, mes DESC, region, tipo_ubicacion, grupo_etario;
@@ -366,7 +360,7 @@ SELECT
     ) as promedio_vacunas_mensuales,
     
     -- Cobertura territorial (porcentaje municipios Tolima atendidos)
-    ROUND(COUNT(DISTINCT v.codigo_municipio) * 100.0 / 47, 1) as cobertura_territorial_pct
+    CAST(ROUND(COUNT(DISTINCT v.codigo_municipio) * 100.0 / 47::numeric, 1) AS decimal) as cobertura_territorial_pct
 
 FROM vacunacion_fiebre_amarilla v
 LEFT JOIN unidades_territoriales ut ON v.codigo_municipio = ut.codigo_divipola
@@ -406,9 +400,8 @@ SELECT
     COUNT(*) FILTER (WHERE c.sangrado = true) as casos_con_sangrado,
     
     -- Letalidad
-    ROUND(
-        COUNT(*) FILTER (WHERE c.condicion_final = 'Muerto') * 100.0 / 
-        NULLIF(COUNT(*), 0), 2
+    CAST(ROUND(COUNT(*) FILTER (WHERE c.condicion_final = 'Muerto') * 100.0 / 
+        NULLIF(COUNT(*)::numeric, 0) AS decimal), 2
     ) as letalidad_porcentaje
 
 FROM casos_fiebre_amarilla c
@@ -444,8 +437,8 @@ SELECT
     MAX(e.fecha_recoleccion) as ultima_epizooti,
     
     -- Coordenadas promedio (para centroide en mapa)
-    ROUND(AVG(e.latitud), 6) as latitud_promedio,
-    ROUND(AVG(e.longitud), 6) as longitud_promedio
+    CAST(CAST(ROUND(AVG(e.latitud)::numeric::numeric, 6) AS decimal) AS decimal) as latitud_promedio,
+    CAST(CAST(ROUND(AVG(e.longitud)::numeric::numeric, 6) AS decimal) AS decimal) as longitud_promedio
 
 FROM epizootias e
 WHERE e.fecha_recoleccion IS NOT NULL
