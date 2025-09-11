@@ -190,10 +190,8 @@ def procesar_casos_fiebre_amarilla_optimizado(archivo_excel: Path) -> pd.DataFra
         
         # Normalizar condición final
         if 'condicion_final' in df.columns:
-            df['condicion_final'] = df['condicion_final'].map({
-                1: 'Vivo', '1': 'Vivo',
-                2: 'Muerto', '2': 'Muerto'
-            }).fillna(df['condicion_final'])
+            condicion_map = {1: 'Vivo', '1': 'Vivo', 2: 'Muerto', '2': 'Muerto'}
+            df['condicion_final'] = df['condicion_final'].map(condicion_map).fillna('Desconocido')
         
         # Normalizar vacunación previa
         if 'vacunado_previo' in df.columns:

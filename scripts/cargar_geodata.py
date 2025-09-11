@@ -111,6 +111,16 @@ def cargar_unidades_territoriales_postgresql(archivo_gpkg: Path = None) -> bool:
         
         # 6. CARGAR CON to_postgis OPTIMIZADO
         logger.info("loading_to_postgis", records=len(gdf))
+
+        with engine.connect() as conn:
+            conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_dashboard_principal CASCADE"))
+            conn.execute(text("DROP VIEW IF EXISTS v_indicadores_tiempo_real CASCADE"))
+            conn.execute(text("DROP VIEW IF EXISTS v_mapa_municipios CASCADE"))
+            conn.execute(text("DROP TABLE IF EXISTS casos_fiebre_amarilla CASCADE"))
+            conn.execute(text("DROP TABLE IF EXISTS epizootias CASCADE")) 
+            conn.execute(text("DROP TABLE IF EXISTS vacunacion_fiebre_amarilla CASCADE"))
+            conn.execute(text("DROP TABLE IF EXISTS poblacion CASCADE"))
+            conn.commit()
         
         gdf.to_postgis(
             'unidades_territoriales',

@@ -151,8 +151,8 @@ def procesar_epizootias_optimizado(archivo_excel: Path) -> pd.DataFrame:
             
             # Filtro coordenadas válidas Colombia
             coordenadas_validas = (
-                (df['latitud'].between(-4.2, 12.6, na=True)) &
-                (df['longitud'].between(-81.8, -66.9, na=True))
+                (df['latitud'].between(-4.2, 12.6)) &
+                (df['longitud'].between(-81.8, -66.9))
             )
             
             coords_validas_count = coordenadas_validas.sum()
